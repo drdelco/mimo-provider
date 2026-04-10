@@ -1,0 +1,20 @@
+@font-face {
+    font-family: "mimo-icons";
+    src: url("./mimo-icons.woff?3ef34cf1e776652e5e8f8b5e876a76f5") format("woff"),
+url("./mimo-icons.woff?3ef34cf1e776652e5e8f8b5e876a76f5") format("woff");
+}
+
+i[class^="mimo-"]:before, i[class*=" mimo-"]:before {
+    font-family: mimo-icons !important;
+    font-style: normal;
+    font-weight: normal !important;
+    font-variant: normal;
+    text-transform: none;
+    line-height: 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.mimo-mimo-logo:before {
+    content: "\f101";
+}

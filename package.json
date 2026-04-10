@@ -1,0 +1,122 @@
+{
+  "name": "mimo-provider",
+  "displayName": "MiMo by Xiaomi",
+  "description": "Xiaomi MiMo language models (V2 Pro & Flash) for Antigravity and VS Code chat — native model provider with streaming and tool calling support.",
+  "version": "0.1.0",
+  "publisher": "alvi-ngclinicas",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alvi-ngclinicas/antigravity-mimo"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["AI", "Other"],
+  "keywords": ["mimo", "xiaomi", "ai", "language-model", "chat", "antigravity", "llm", "coding-assistant"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "icons": {
+      "mimo-logo": {
+        "description": "MiMo logo icon",
+        "default": {
+          "fontPath": "./icon-font/mimo-icons.woff",
+          "fontCharacter": "\\f101"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mimo-sidebar",
+          "title": "MiMo by Xiaomi",
+          "icon": "activity-icon.png"
+        }
+      ]
+    },
+    "views": {
+      "mimo-sidebar": [
+        {
+          "type": "webview",
+          "id": "mimo.chatView",
+          "name": "MiMo Chat"
+        }
+      ]
+    },
+    "languageModelChatProviders": [
+      {
+        "vendor": "mimo",
+        "displayName": "Xiaomi MiMo",
+        "managementCommand": "mimo.manage"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "mimo",
+        "name": "MiMo",
+        "description": "Xiaomi MiMo AI coding assistant",
+        "isSticky": true,
+        "isDefault": true
+      }
+    ],
+    "commands": [
+      {
+        "command": "mimo.manage",
+        "title": "MiMo: Configure API Key"
+      },
+      {
+        "command": "mimo.test",
+        "title": "MiMo: Test Connection"
+      },
+      {
+        "command": "mimo.openChat",
+        "title": "MiMo: Open Chat Panel",
+        "icon": "$(mimo-logo)"
+      },
+      {
+        "command": "mimo.newChat",
+        "title": "MiMo: New Chat"
+      },
+      {
+        "command": "mimo.clearHistory",
+        "title": "MiMo: Clear Chat History"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "mimo.openChat",
+          "group": "navigation",
+          "when": "true"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MiMo Provider",
+      "properties": {
+        "mimo.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "MiMo API Key"
+        },
+        "mimo.baseUrl": {
+          "type": "string",
+          "default": "https://token-plan-ams.xiaomimimo.com/v1",
+          "description": "MiMo API base URL"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.0"
+  }
+}
