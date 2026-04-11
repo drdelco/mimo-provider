@@ -6,8 +6,7 @@ import { MiMoChatViewProvider } from './webview';
 const panels = new Map<number, { panel: vscode.WebviewPanel; provider: MiMoChatViewProvider }>();
 
 export function activate(context: vscode.ExtensionContext) {
-  // Persistent tab counter — survives extension reloads
-  let panelCounter = context.globalState.get<number>('mimo.panelCounter', 0);
+  let panelCounter = 0;
   // Register the model provider
   const provider = new MiMoProvider();
   context.subscriptions.push(
@@ -29,12 +28,15 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Open a NEW chat tab (each tab = independent conversation)
   function openNewChatPanel() {
+    // If no tabs open, reset counter to 0; otherwise use highest existing + 1
+    if (panels.size === 0) {
+      panelCounter = 0;
+    }
     panelCounter++;
-    context.globalState.update('mimo.panelCounter', panelCounter);
     const id = panelCounter;
 
-    // Each tab gets its own provider instance with its own conversation
     const tabProvider = new MiMoChatViewProvider(context.extensionUri);
+    tabProvider.setExtensionContext(context);
 
     const panel = vscode.window.createWebviewPanel(
       'mimo.chatPanel',

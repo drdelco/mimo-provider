@@ -86,20 +86,19 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       while (needsMoreToolCalls && iteration < maxIterations) {
         iteration++;
 
-        // Show progress to user — they see this in real time
-        this.postMessage({ type: 'progress', step: iteration, max: maxIterations });
+        // ---- Visible feedback: BEFORE API call ----
+        this.postMessage({ type: 'step', text: `Step ${iteration} — calling MiMo...` });
 
+        // Inject pending user messages
         while (this.pendingMessages.length > 0) {
           const queuedMsg = this.pendingMessages.shift()!;
-          this.conversationHistory.push({
-            role: 'user',
-            content: `[User message during work]: ${queuedMsg}`
-          });
+          this.conversationHistory.push({ role: 'user', content: `[User message during work]: ${queuedMsg}` });
+          this.postMessage({ type: 'step', text: `Step ${iteration} — incorporating your message...` });
         }
 
-        // Checkpoint every N iterations — visible to user AND sent to model
+        // Checkpoint every N iterations
         if (iteration > 1 && iteration % CHECKPOINT_INTERVAL === 0) {
-          this.postMessage({ type: 'stream', text: `\n**[Checkpoint — step ${iteration}]** Requesting progress summary...\n` });
+          this.postMessage({ type: 'step', text: `Step ${iteration} — checkpoint, requesting progress summary...` });
           this.conversationHistory.push({
             role: 'user',
             content: `CHECKPOINT: ${iteration} iterations done. Give a brief summary: 1) what you did 2) what remains 3) if stuck, say so clearly. Then continue.`
@@ -114,8 +113,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         const modelId = pickModel(false, lastToolName);
         const modelSpec = getModel(modelId);
 
-        // Only enable thinking on first iteration and after checkpoints.
-        // Intermediate tool-call iterations use fast mode (no deep reasoning).
+        // Only think on first iteration and checkpoints — fast mode for tool calls
         const useThinking = modelSpec.supportsThinking && (iteration === 1 || iteration % CHECKPOINT_INTERVAL === 0);
 
         const requestBody: Record<string, any> = {
@@ -124,10 +122,9 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           tools: vscode.workspace.getConfiguration('mimo').get('webSearch') ? [...TOOLS, WEB_SEARCH_TOOL] : TOOLS,
           stream: false,
           max_completion_tokens: Math.min(modelSpec.maxOutputTokens, 32768),
-          temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5
+          temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5,
+          thinking: { type: useThinking ? 'enabled' : 'disabled' }
         };
-
-        requestBody.thinking = { type: useThinking ? 'enabled' : 'disabled' };
 
         let response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
@@ -170,18 +167,28 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
 
         const message = choice.message;
 
-        if (choice.finish_reason === 'tool_calls' && message.tool_calls) {
+        // ---- Visible feedback: AFTER API call ----
+        // Show any intermediate text content from MiMo (progress updates)
+        if (message.content && (choice.finish_reason === 'tool_calls' || message.tool_calls)) {
+          this.postMessage({ type: 'stream', text: message.content + '\n' });
+        }
+
+        if ((choice.finish_reason === 'tool_calls' || message.tool_calls?.length) && message.tool_calls) {
           this.conversationHistory.push({ role: 'assistant', content: message.content || '', tool_calls: message.tool_calls });
 
           for (const toolCall of message.tool_calls) {
             const tc: ToolCall = { id: toolCall.id, function: { name: toolCall.function.name, arguments: toolCall.function.arguments } };
             const args = JSON.parse(tc.function.arguments);
+
+            // Show tool call BEFORE executing
             this.postMessage({ type: 'toolCall', name: tc.function.name, args: this.formatToolCall(tc.function.name, args) });
 
             lastToolName = tc.function.name;
             const result = await executeTool(tc);
+
+            // Show abbreviated result AFTER executing
             this.postMessage({ type: 'toolResult', name: tc.function.name, result: result.length > 2000 ? result.substring(0, 2000) + '\n...' : result });
-            // Truncate tool results in history to avoid bloating subsequent requests
+
             const historyResult = result.length > 4000 ? result.substring(0, 4000) + '\n... (truncated)' : result;
             this.conversationHistory.push({ role: 'tool', content: historyResult, tool_call_id: tc.id });
           }

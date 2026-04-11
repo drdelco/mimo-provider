@@ -215,18 +215,16 @@
         stopBtn.style.display = "flex";
         break;
 
-      case "progress":
-        // Show/update a step counter so the user knows it's alive
-        var progressEl = document.getElementById("progressIndicator");
-        if (!progressEl) {
-          progressEl = document.createElement("div");
-          progressEl.id = "progressIndicator";
-          progressEl.className = "message tool-msg";
-          progressEl.style.opacity = "0.7";
-          progressEl.style.fontStyle = "italic";
-          messagesEl.appendChild(progressEl);
-        }
-        progressEl.textContent = "Step " + msg.step + " ...";
+      case "step":
+        // Visible step indicator — always at the bottom, always visible
+        var stepEl = document.getElementById("stepIndicator");
+        if (stepEl) stepEl.remove();
+        stepEl = document.createElement("div");
+        stepEl.id = "stepIndicator";
+        stepEl.className = "message tool-msg";
+        stepEl.style.borderLeftColor = "var(--vscode-charts-yellow)";
+        stepEl.textContent = msg.text;
+        messagesEl.appendChild(stepEl);
         scrollToBottom();
         break;
 
@@ -272,8 +270,8 @@
       case "streamEnd":
         currentAssistantDiv = null;
         stopBtn.style.display = "none";
-        var doneEl = document.getElementById("progressIndicator");
-        if (doneEl) doneEl.remove();
+        var cleanEl = document.getElementById("stepIndicator");
+        if (cleanEl) cleanEl.remove();
         inputEl.focus();
         break;
 

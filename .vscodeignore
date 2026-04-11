@@ -7,3 +7,4 @@ tsconfig.json
 mimo-original-logo.png
 icon.svg
 test-*
+*.txt

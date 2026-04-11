@@ -50,7 +50,9 @@
       "Bash(git -C /c/PROYECTOS/mimo-provider add package.json)",
       "Bash(git -C /c/PROYECTOS/mimo-provider add package.json src/extension.ts)",
       "Bash(git -C /c/PROYECTOS/mimo-provider add CHANGELOG.md)",
-      "Bash(git -C /c/PROYECTOS/mimo-provider add src/webview.ts)"
+      "Bash(git -C /c/PROYECTOS/mimo-provider add src/webview.ts)",
+      "Bash(git -C /c/PROYECTOS/mimo-provider rm --cached \"subidas a VSX market.txt\")",
+      "Bash(git -C /c/PROYECTOS/mimo-provider reset HEAD~1 --soft)"
     ]
   }
 }

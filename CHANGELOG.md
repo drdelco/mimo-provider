@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.0 (2026-04-12)
+
+### Visible step-by-step feedback
+
+- **Step indicator**: each iteration shows "Step N — calling MiMo..." in real time before and during API calls. The user always knows the agent is alive and what it's doing.
+- **Intermediate text**: if MiMo sends text content alongside tool calls (progress updates), it's now displayed immediately instead of being silently stored.
+- **Step indicator removed on completion**: cleaned up when the agent finishes.
+
+### Thinking optimization
+
+- Deep thinking (chain-of-thought) now only on **first iteration and checkpoints** (every 10 steps). All other iterations use fast mode — significantly faster execution for multi-step tasks.
+
+### Tab numbering fix
+
+- Counter resets to #1 when all tabs are closed. Continues from last + 1 while tabs remain open.
+- Tab providers now receive `extensionContext` for history persistence.
+
 ## 0.6.1 (2026-04-11)
 
 - **Usage button fix**: token usage panel now appears at the bottom of chat (was inserted at top, invisible)
