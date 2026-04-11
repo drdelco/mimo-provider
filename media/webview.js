@@ -205,6 +205,18 @@
   window.addEventListener("message", function (e) {
     var msg = e.data;
     switch (msg.type) {
+      case "init":
+        // Save tabId so VS Code can restore this panel after restart
+        vscode.setState({ tabId: msg.tabId });
+        break;
+
+      case "restored":
+        // Tab was restored from a previous session — show indicator
+        var welcome = document.getElementById("welcome");
+        if (welcome) welcome.style.display = "none";
+        addMessage("Session restored from previous workspace.", "tool-msg");
+        break;
+
       case "filePicked":
         attachedFiles.push(msg.path);
         renderAttachedFiles();

@@ -26,9 +26,41 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  /** Persist the list of open tab IDs so they survive restart */
+  function persistOpenTabs() {
+    const openIds = [...panels.keys()];
+    context.workspaceState.update('mimo.openTabs', openIds);
+  }
+
+  /** Wire up a tab panel with its provider */
+  function wireTab(id: number, panel: vscode.WebviewPanel, tabProvider: MiMoChatViewProvider) {
+    tabProvider.setTabId(id);
+    tabProvider.setExtensionContext(context);
+    tabProvider.setActiveWebview(panel.webview);
+
+    // Tell the webview its tabId so it can persist it via setState()
+    panel.webview.postMessage({ type: 'init', tabId: id });
+
+    // If there's saved history, tell the webview to show a restored indicator
+    if (tabProvider.hasHistory()) {
+      panel.webview.postMessage({ type: 'restored' });
+    }
+
+    panel.webview.onDidReceiveMessage((message) => tabProvider.handleWebviewMessage(message));
+
+    panel.onDidDispose(() => {
+      panels.delete(id);
+      persistOpenTabs();
+      // History is cleaned up only via clearHistory() (user action).
+      // On VS Code shutdown, dispose fires but history stays for restore.
+    });
+
+    panels.set(id, { panel, provider: tabProvider });
+    persistOpenTabs();
+  }
+
   // Open a NEW chat tab (each tab = independent conversation)
   function openNewChatPanel() {
-    // If no tabs open, reset counter to 0; otherwise use highest existing + 1
     if (panels.size === 0) {
       panelCounter = 0;
     }
@@ -36,7 +68,6 @@ export function activate(context: vscode.ExtensionContext) {
     const id = panelCounter;
 
     const tabProvider = new MiMoChatViewProvider(context.extensionUri);
-    tabProvider.setExtensionContext(context);
 
     const panel = vscode.window.createWebviewPanel(
       'mimo.chatPanel',
@@ -50,16 +81,31 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     panel.webview.html = tabProvider.getHtml(panel.webview);
-    tabProvider.setActiveWebview(panel.webview);
-
-    panel.webview.onDidReceiveMessage((message) => tabProvider.handleWebviewMessage(message));
-
-    panel.onDidDispose(() => {
-      panels.delete(id);
-    });
-
-    panels.set(id, { panel, provider: tabProvider });
+    wireTab(id, panel, tabProvider);
   }
+
+  // Restore tab counter from saved tabs
+  const savedTabs = context.workspaceState.get<number[]>('mimo.openTabs', []);
+  if (savedTabs.length > 0) {
+    panelCounter = Math.max(...savedTabs);
+  }
+
+  // Serializer: VS Code calls this to restore panels that were open when the window closed
+  context.subscriptions.push(
+    vscode.window.registerWebviewPanelSerializer('mimo.chatPanel', {
+      async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: any) {
+        const id = state?.tabId || ++panelCounter;
+        const tabProvider = new MiMoChatViewProvider(context.extensionUri);
+
+        panel.webview.options = {
+          enableScripts: true,
+          localResourceRoots: [context.extensionUri]
+        };
+        panel.webview.html = tabProvider.getHtml(panel.webview);
+        wireTab(id, panel, tabProvider);
+      }
+    })
+  );
 
   // Open chat = always new tab (multi-agent)
   context.subscriptions.push(

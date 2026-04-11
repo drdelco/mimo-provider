@@ -12,12 +12,18 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
   private pendingMessages: string[] = [];
   private isProcessing = false;
   private extensionContext?: vscode.ExtensionContext;
+  private tabId?: number;
 
   constructor(private readonly extensionUri: vscode.Uri) {}
 
+  /** Set the tab ID for independent history persistence (tabs only, not sidebar) */
+  public setTabId(id: number) { this.tabId = id; }
+  public getTabId(): number | undefined { return this.tabId; }
+
   public setExtensionContext(ctx: vscode.ExtensionContext) {
     this.extensionContext = ctx;
-    const saved = ctx.workspaceState.get<string>('mimo.history');
+    const key = this.tabId ? `mimo.tab.${this.tabId}.history` : 'mimo.history';
+    const saved = ctx.workspaceState.get<string>(key);
     if (saved) {
       this.conversationHistory = deserializeHistory(saved);
     }
@@ -25,10 +31,18 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
 
   private persistHistory() {
     if (this.extensionContext) {
-      this.extensionContext.workspaceState.update(
-        'mimo.history',
-        serializeHistory(this.conversationHistory)
-      );
+      const key = this.tabId ? `mimo.tab.${this.tabId}.history` : 'mimo.history';
+      this.extensionContext.workspaceState.update(key, serializeHistory(this.conversationHistory));
+    }
+  }
+
+  /** Check if this provider has conversation history loaded */
+  public hasHistory(): boolean { return this.conversationHistory.length > 0; }
+
+  /** Clean up persisted history for this tab */
+  public removePersistedHistory() {
+    if (this.extensionContext && this.tabId) {
+      this.extensionContext.workspaceState.update(`mimo.tab.${this.tabId}.history`, undefined);
     }
   }
 
