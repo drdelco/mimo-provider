@@ -11,116 +11,81 @@ Use **Xiaomi MiMo** language models as a full coding agent inside Google Antigra
 
 ## Features
 
-### 💬 Chat Panel
-- Sidebar panel with its own chat interface (click the **M** icon in the Activity Bar)
-- Full conversation history with context awareness
+### Chat Panel
+
+Sidebar panel with its own chat interface — click the **M** icon in the Activity Bar.
+
+- Conversation history with context awareness
 - Quick action buttons: Explain, Refactor, Debug, Test
-- Markdown rendering with code highlighting
+- Markdown rendering with syntax-highlighted code blocks
 - One-click "Insert into editor" for generated code
+- Attach files as context with the clip button
+- Token usage tracking with link to MiMo Platform quota
+- Stop button to abort running tasks instantly
+- Send messages while MiMo works — they get injected into the next tool step
 
-### 📎 File Context
-- Attach files directly to your messages with the 📎 button
-- Files are read and injected into the conversation as context
-- Supports all code file types (TS, JS, Python, CSS, HTML, JSON, MD, etc.)
+### Coding Agent (Tool Calling)
 
-### 📊 Token Usage
-- Track session token consumption with the 📊 button
-- Direct link to [MiMo Platform](https://platform.xiaomimimo.com/#/console/plan-manage) to check remaining quota
+MiMo can autonomously use 7 tools to explore, edit, and test your code:
 
-### ⏹ Stop / Cancel
-- Stop button appears during processing to abort running tasks
-- Cancel infinite loops or wrong commands instantly
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read file contents |
+| `write_file` | Create new files or complete rewrites |
+| `edit_file` | Surgical edits to specific parts of a file |
+| `run_terminal` | Execute shell commands (builds, tests, git, npm) |
+| `search_files` | Grep-like search across the codebase |
+| `list_files` | List directory contents |
+| `get_diagnostics` | Read errors/warnings from the VS Code Problems panel |
 
-### 📨 Live Message Injection
-- Send new messages while MiMo is processing — they get injected into the next tool step
-- MiMo incorporates your feedback mid-task without waiting
+### Smart Context
 
-### 🧠 Smart Context Management
-- Automatically reads existing context files at session start:
-  - `CLAUDE.md` — Claude Code project rules
-  - `.claude/rules/` — Scoped rules
-  - `.agent/` — Antigravity memory files
-  - `.mimo-context.md` — MiMo's own persistent memory
-  - `.cursorrules`, `AGENTS.md`, `.github/copilot-instructions.md`
-- Maintains `.mimo-context.md` as a persistent memory file across sessions
+- Auto-detects OS and injects shell commands (Windows CMD/PowerShell or Unix bash)
+- Auto-loads project context files at each request: `CLAUDE.md`, `.claude/rules/`, `.cursorrules`, `AGENTS.md`, `.github/copilot-instructions.md`
+- Maintains `.mimo-context.md` as persistent memory across sessions
+- Progress checkpoints every 20 iterations with status summary
 
-### ⏱️ Progress Checkpoints
-- Automatic progress summary every 20 iterations
-- MiMo reports what it has done, what remains, and if it's stuck
+### Chat Participant
 
-### 🛠️ Coding Agent
-MiMo can autonomously:
-- **Read** files to understand your codebase
-- **Write** new files and create directory structures
-- **Edit** specific parts of existing files (surgical edits)
-- **Run** terminal commands (builds, tests, git, npm, etc.)
-- **Search** across files using grep patterns
-- **List** directory contents
-- **Check** diagnostics (errors & warnings from VS Code)
+Works with Antigravity/VS Code native chat via `@MiMo`.
 
-### 🔌 Chat Participant
-- Works with Antigravity/VS Code native chat via `@MiMo`
-- Note: The native model picker integration depends on Antigravity support for the `LanguageModelChatProvider` API. If MiMo doesn't appear in the model picker, use the dedicated chat panel or `@MiMo` in native chat.
+> **Note:** Native model picker integration depends on Antigravity support for the `LanguageModelChatProvider` API. If MiMo doesn't appear in the model picker, use the dedicated chat panel.
 
 ## Setup
 
 ### 1. Install
 
 **From VSIX:**
-1. Download the latest `.vsix` from the [releases](#) or [Open VSX](https://open-vsx.org)
-2. Open Antigravity/VS Code → Extensions (`Ctrl+Shift+X`)
-3. `⋮` menu → "Install from VSIX..." → select the file
+1. Download the latest `.vsix` from [Releases](https://github.com/drdelco/mimo-provider/releases)
+2. Open Antigravity/VS Code > Extensions (`Ctrl+Shift+X`)
+3. Menu `...` > "Install from VSIX..." > select the file
 
 **From Open VSX** (Antigravity):
-1. Open Extensions → Search **"MiMo by Xiaomi"**
+1. Open Extensions > Search **"MiMo by Xiaomi"**
 2. Click Install
 
 ### 2. Configure your API key
 
-1. `Ctrl+Shift+P` → **"MiMo: Configure API Key"**
+1. `Ctrl+Shift+P` > **"MiMo: Configure API Key"**
 2. Enter your Xiaomi MiMo API key
 
 Get your API key at [platform.xiaomimimo.com](https://platform.xiaomimimo.com/)
 
 ### 3. Start chatting
 
-- Click the **M** icon in the Activity Bar to open the dedicated chat panel
+- Click the **M** icon in the Activity Bar to open the chat panel
 - Type your request and press Enter
-
-> **Note:** Native chat integration (`@MiMo` and model picker) is not currently supported by Antigravity. Use the dedicated chat panel for full MiMo functionality.
 
 ## Chat Controls
 
 | Control | Action |
 |---------|--------|
 | `Enter` | Send message |
-| `Shift+Enter` | New line in message |
-| `📎` | Attach file as context |
-| `📊` | View token usage + quota link |
-| `⏹` | Stop processing (shown during work) |
-| `🗑️ New` | Clear history and start fresh |
-
-## Usage Examples
-
-```
-Read the file src/api.ts and explain what it does
-```
-
-```
-Find all TODO comments in the project and create a summary
-```
-
-```
-Create a React component for a user profile card with TypeScript and Tailwind
-```
-
-```
-Run the tests and fix any failures
-```
-
-```
-Refactor the database connection code to use connection pooling
-```
+| `Shift+Enter` | New line |
+| Clip button | Attach file as context |
+| Chart button | View token usage and quota link |
+| Stop button | Abort processing (shown during work) |
+| New button | Clear history and start fresh |
 
 ## Commands
 
@@ -128,9 +93,8 @@ Refactor the database connection code to use connection pooling
 |---------|-------------|
 | `MiMo: Configure API Key` | Set or update your API key and base URL |
 | `MiMo: Test Connection` | Verify API connectivity and list available models |
-| `MiMo: Open Chat Panel` | Open the dedicated MiMo chat sidebar |
-| `MiMo: New Chat` | Clear chat history and start fresh |
-| `MiMo: Clear Chat History` | Clear conversation context |
+| `MiMo: Open Chat Panel` | Open the dedicated MiMo chat in an editor tab |
+| `MiMo: New Chat` | Clear conversation and start fresh |
 
 ## Settings
 
@@ -138,12 +102,6 @@ Refactor the database connection code to use connection pooling
 |---------|---------|-------------|
 | `mimo.apiKey` | `""` | Xiaomi MiMo API key |
 | `mimo.baseUrl` | `https://token-plan-ams.xiaomimimo.com/v1` | API base URL |
-
-## How it works
-
-This extension provides a dedicated chat panel powered by MiMo with full tool calling support. When you ask MiMo to perform an action, it decides which tools to use (read file, write file, run command, etc.) and executes them automatically, showing you each step.
-
-> **Note:** Native VS Code chat integration (`@MiMo`, model picker) is not supported by Antigravity at this time.
 
 ## Requirements
 

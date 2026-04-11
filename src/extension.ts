@@ -3,7 +3,9 @@ import { MiMoProvider } from './provider';
 import { MiMoChatParticipant } from './chat';
 import { MiMoChatViewProvider } from './webview';
 
-let currentPanel: vscode.WebviewPanel | undefined;
+// Track multiple chat panels for multi-agent
+let panelCounter = 0;
+const panels = new Map<number, { panel: vscode.WebviewPanel; provider: MiMoChatViewProvider }>();
 
 export function activate(context: vscode.ExtensionContext) {
   // Register the model provider
@@ -16,24 +18,26 @@ export function activate(context: vscode.ExtensionContext) {
   const chat = new MiMoChatParticipant();
   context.subscriptions.push(chat.register(context));
 
-  // Register the sidebar webview (fallback)
-  const chatViewProvider = new MiMoChatViewProvider(context.extensionUri);
+  // Sidebar provider (shared instance)
+  const sidebarProvider = new MiMoChatViewProvider(context.extensionUri);
+  sidebarProvider.setExtensionContext(context);
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('mimo.chatView', chatViewProvider, {
+    vscode.window.registerWebviewViewProvider('mimo.chatView', sidebarProvider, {
       webviewOptions: { retainContextWhenHidden: true }
     })
   );
 
-  // Open chat as editor tab (like Claude Code)
-  function openChatPanel() {
-    if (currentPanel) {
-      currentPanel.reveal(vscode.ViewColumn.One);
-      return;
-    }
+  // Open a NEW chat tab (each tab = independent conversation)
+  function openNewChatPanel() {
+    panelCounter++;
+    const id = panelCounter;
 
-    currentPanel = vscode.window.createWebviewPanel(
+    // Each tab gets its own provider instance with its own conversation
+    const tabProvider = new MiMoChatViewProvider(context.extensionUri);
+
+    const panel = vscode.window.createWebviewPanel(
       'mimo.chatPanel',
-      'MiMo by Xiaomi',
+      `MiMo #${id}`,
       vscode.ViewColumn.One,
       {
         enableScripts: true,
@@ -42,54 +46,35 @@ export function activate(context: vscode.ExtensionContext) {
       }
     );
 
-    currentPanel.webview.html = chatViewProvider.getHtml(currentPanel.webview);
+    panel.webview.html = tabProvider.getHtml(panel.webview);
+    tabProvider.setActiveWebview(panel.webview);
 
-    // Handle messages from the webview
-    currentPanel.webview.onDidReceiveMessage(async (message) => {
-      switch (message.type) {
-        case 'sendMessage':
-          await handleChatMessage(message.text, currentPanel!.webview);
-          break;
-        case 'clearHistory':
-          chatViewProvider.clearHistory();
-          currentPanel?.webview.postMessage({ type: 'historyCleared' });
-          break;
-        case 'insertCode':
-          await insertCodeToEditor(message.code);
-          break;
-      }
+    panel.webview.onDidReceiveMessage((message) => tabProvider.handleWebviewMessage(message));
+
+    panel.onDidDispose(() => {
+      panels.delete(id);
     });
 
-    currentPanel.onDidDispose(() => {
-      currentPanel = undefined;
-    });
+    panels.set(id, { panel, provider: tabProvider });
   }
 
-  // Delegate chat handling to the webview provider
-  async function handleChatMessage(text: string, webview: vscode.Webview) {
-    // Forward to the chat view provider's handler
-    // We need to use the provider's internal state
-    (chatViewProvider as any).view = { webview };
-    await (chatViewProvider as any).handleUserMessage(text);
-  }
-
-  // Status bar button — custom MiMo icon
+  // Status bar button
   const statusBarBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarBtn.text = "$(mimo-logo)";
-  statusBarBtn.tooltip = 'Open MiMo Chat';
+  statusBarBtn.tooltip = 'New MiMo Chat';
   statusBarBtn.command = 'mimo.openChat';
   statusBarBtn.show();
   context.subscriptions.push(statusBarBtn);
 
-  // Open chat command — opens in editor tab
+  // Open chat = always new tab (multi-agent)
   context.subscriptions.push(
-    vscode.commands.registerCommand('mimo.openChat', openChatPanel)
+    vscode.commands.registerCommand('mimo.openChat', openNewChatPanel)
   );
 
-  // New chat command
+  // New chat in sidebar
   context.subscriptions.push(
     vscode.commands.registerCommand('mimo.newChat', () => {
-      chatViewProvider.clearHistory();
+      sidebarProvider.clearHistory();
     })
   );
 
@@ -106,38 +91,22 @@ export function activate(context: vscode.ExtensionContext) {
       const action = await vscode.window.showInformationMessage(
         `MiMo API Key: ${maskedKey}`,
         'Change Key',
-        'Change Base URL',
         'Test Connection',
-        'Open Chat'
+        'New Chat Tab'
       );
 
       if (action === 'Change Key') {
         const newKey = await vscode.window.showInputBox({
-          prompt: 'Enter your MiMo API Key',
+          prompt: 'Enter your MiMo API Key (tp-... for Token Plan, sk-... for API)',
           password: true,
           value: currentKey,
-          placeHolder: 'tp-...'
+          placeHolder: 'tp-... or sk-...'
         });
 
         if (newKey !== undefined) {
           await config.update('apiKey', newKey, vscode.ConfigurationTarget.Global);
           await config.update('apiKey', newKey, vscode.ConfigurationTarget.Workspace);
-          vscode.window.showInformationMessage('MiMo API Key updated ✅');
-        }
-      }
-
-      if (action === 'Change Base URL') {
-        const currentUrl = config.get<string>('baseUrl', 'https://token-plan-ams.xiaomimimo.com/v1');
-        const newUrl = await vscode.window.showInputBox({
-          prompt: 'MiMo API Base URL',
-          value: currentUrl,
-          placeHolder: 'https://token-plan-ams.xiaomimimo.com/v1'
-        });
-
-        if (newUrl !== undefined) {
-          await config.update('baseUrl', newUrl, vscode.ConfigurationTarget.Global);
-          await config.update('baseUrl', newUrl, vscode.ConfigurationTarget.Workspace);
-          vscode.window.showInformationMessage('MiMo Base URL updated ✅');
+          vscode.window.showInformationMessage('MiMo API Key updated');
         }
       }
 
@@ -145,13 +114,13 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.commands.executeCommand('mimo.test');
       }
 
-      if (action === 'Open Chat') {
-        openChatPanel();
+      if (action === 'New Chat Tab') {
+        openNewChatPanel();
       }
     })
   );
 
-  // Test connection command
+  // Test connection
   context.subscriptions.push(
     vscode.commands.registerCommand('mimo.test', async () => {
       const config = vscode.workspace.getConfiguration('mimo');
@@ -165,12 +134,8 @@ export function activate(context: vscode.ExtensionContext) {
 
       try {
         await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: 'Testing MiMo connection...',
-            cancellable: true
-          },
-          async (progress, token) => {
+          { location: vscode.ProgressLocation.Notification, title: 'Testing MiMo...', cancellable: true },
+          async () => {
             const response = await fetch(`${baseUrl}/models`, {
               headers: { 'Authorization': `Bearer ${apiKey}` },
               signal: AbortSignal.timeout(10000)
@@ -179,33 +144,19 @@ export function activate(context: vscode.ExtensionContext) {
             if (response.ok) {
               const data = await response.json() as any;
               const models = data.data?.map((m: any) => m.id).join(', ') || 'unknown';
-              vscode.window.showInformationMessage(`MiMo: Connected ✅ — ${models}`);
+              vscode.window.showInformationMessage(`MiMo: Connected — ${models}`);
             } else {
-              vscode.window.showErrorMessage(`MiMo: Error ${response.status} — ${await response.text()}`);
+              vscode.window.showErrorMessage(`MiMo: Error ${response.status}`);
             }
           }
         );
       } catch (error: any) {
-        vscode.window.showErrorMessage(`MiMo: Connection error — ${error.message}`);
+        vscode.window.showErrorMessage(`MiMo: ${error.message}`);
       }
     })
   );
 
   console.log('MiMo by Xiaomi extension activated');
-}
-
-async function insertCodeToEditor(code: string) {
-  const editor = vscode.window.activeTextEditor;
-  if (editor) {
-    await editor.edit((editBuilder) => {
-      const selection = editor.selection;
-      if (!selection.isEmpty) {
-        editBuilder.replace(selection, code);
-      } else {
-        editBuilder.insert(selection.active, code);
-      }
-    });
-  }
 }
 
 export function deactivate() {}

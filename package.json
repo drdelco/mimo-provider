@@ -1,13 +1,13 @@
 {
   "name": "mimo-provider",
   "displayName": "MiMo by Xiaomi",
-  "description": "Xiaomi MiMo language models (V2 Pro & Flash) for Antigravity and VS Code chat — native model provider with streaming and tool calling support.",
-  "version": "0.1.0",
+  "description": "Use Xiaomi MiMo V2 models as a full coding agent in Antigravity and VS Code — chat panel, tool calling, file editing, terminal execution, and smart context management.",
+  "version": "0.5.1",
   "publisher": "alvi-ngclinicas",
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/alvi-ngclinicas/antigravity-mimo"
+    "url": "https://github.com/drdelco/mimo-provider"
   },
   "license": "MIT",
   "engines": {
@@ -105,6 +105,16 @@
           "type": "string",
           "default": "https://token-plan-ams.xiaomimimo.com/v1",
           "description": "MiMo API base URL"
+        },
+        "mimo.useFlashForSimpleTasks": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use MiMo V2 Flash for simple tool calls (read, search, list). Only enable if your plan includes Flash."
+        },
+        "mimo.webSearch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable web search. Requires the Web Search plugin to be enabled at platform.xiaomimimo.com > Plugin Management."
         }
       }
     }

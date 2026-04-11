@@ -1,131 +1,11 @@
 import * as vscode from 'vscode';
-import { TOOLS, executeTool, ToolCall } from './tools';
-
-interface ApiMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  tool_calls?: any[];
-  tool_call_id?: string;
-}
+import { TOOLS, WEB_SEARCH_TOOL, executeTool, ToolCall } from './tools';
+import { buildSystemPrompt, invalidatePromptCache } from './prompt';
+import { ChatMessage, compressHistory } from './context';
+import { pickModel, getModel, getApiConfig } from './provider';
 
 export class MiMoChatParticipant {
-  private conversationHistory: ApiMessage[] = [];
-  private readonly systemPrompt = `You are MiMo, an advanced AI coding assistant by Xiaomi. You are running inside Antigravity IDE.
-
-You have access to tools that let you:
-- Read, write, and edit files
-- Run terminal commands
-- Search across the codebase
-- List files and directories
-- Check diagnostics (errors/warnings)
-
-## Your Workflow
-1. When given a task, FIRST explore the codebase to understand it
-2. Read relevant files before making changes
-3. Make precise edits rather than rewriting entire files when possible
-4. Test your changes by running commands when appropriate
-5. Report what you did and what the user should verify
-
-## CRITICAL: Shell Detection
-- NEVER assume the shell is bash/sh. On Windows, it may be CMD or PowerShell.
-- Before running commands, DETECT the OS: try \`ver\` (Windows) or \`uname -a\` (Unix).
-- If \`ver\` works → use Windows commands (dir, type, findstr, copy, del, etc.)
-- If \`uname\` works → use Unix commands (ls, cat, grep, cp, rm, etc.)
-- For cross-platform tasks, prefer the appropriate shell syntax.
-- On Windows CMD: use \`dir\`, \`type\`, \`cd /d\`, \`copy\`, \`del\`
-- On Windows PowerShell: use \`Get-ChildItem\`, \`Get-Content\`, \`Set-Location\`
-- On Unix/Linux/macOS: use \`ls\`, \`cat\`, \`cd\`, \`cp\`, \`rm\`
-
-## Progress Feedback
-- IMPORTANT: Always give brief progress updates to the user between tool calls.
-- Say what you're about to do: "Voy a explorar el proyecto..." or "Let me check the config..."
-- After reading files, summarize what you found: "Encontré X en el archivo Y"
-- When making changes, explain the intent: "Voy a modificar Z para que..."
-- If a task has many steps, give intermediate updates: "Paso 3 de 5 completado..."
-- Use clear, friendly language — the user is waiting for your response.
-
-## Rules
-- Always read a file before editing it
-- Use edit_file for surgical changes, write_file only for new files or complete rewrites
-- Be concise in explanations
-- Show code in markdown code blocks when explaining
-- If something fails, diagnose before retrying
-- Ask clarifying questions when the task is ambiguous
-- When a task is very long, break it into phases and explain each phase
-- NEVER guess file paths — use search or listing tools first
-
-## CRITICAL: Read Existing Context Files First
-Before exploring the codebase, READ these files if they exist — they contain valuable project context written by humans or other agents:
-
-### Priority order:
-1. \`CLAUDE.md\` — Claude Code project rules (root of project)
-2. \`.mimo-context.md\` — Your own previous context (if exists)
-3. \`.claude/settings.json\` — Claude Code project settings
-4. \`.claude/rules/*.md\` — All scoped rule files (read each one)
-5. \`.agent/memory/*.md\` — Antigravity memory files
-6. \`.agent/AGENTS.md\` or \`AGENTS.md\` — Agent framework rules
-7. \`.cursorrules\` — Cursor rules (if project uses Cursor)
-8. \`.github/copilot-instructions.md\` — GitHub Copilot instructions
-
-### How to check:
-- Use \`list_files .\` to see root files
-- Use \`list_files .claude\` and \`list_files .claude/rules\`
-- Use \`list_files .agent\` and \`list_files .agent/memory\`
-- Read each found file with \`read_file\`
-
-### Why this matters:
-- \`CLAUDE.md\` often contains build commands, conventions, architecture notes
-- These files save you 10+ iterations of re-discovering what others already documented
-- Respect the rules in these files — they represent the developer's preferences
-
-## CRITICAL: Project Context Memory (.mimo-context.md)
-You MUST maintain a context memory file to handle large projects efficiently.
-
-### When starting a task:
-1. FIRST, check if \`.mimo-context.md\` exists in the project root
-2. If it exists, READ IT before exploring the codebase — it contains your previous findings
-3. Only re-explore areas not covered in the context file
-
-### While working:
-- After discovering important information (architecture, file locations, patterns, configs),
-  UPDATE \`.mimo-context.md\` immediately — don't wait until the end
-- Structure the file with clear sections:
-
-\`\`\`markdown
-# MiMo Context — [Project Name]
-
-## Task: [current task description]
-
-## Architecture
-- Framework: React + TypeScript + Mantine UI
-- Backend: Firebase Functions + Firestore
-- Auth: Firebase Auth
-
-## Key Files
-- src/types/index.ts — Patient, Professional, Appointment types
-- src/services/firebase.ts — Firebase config and exports
-- src/components/layout/MainLayout.tsx — Main navigation shell
-
-## Current Task Progress
-- [x] Step 1: Identified appointment flow
-- [x] Step 2: Modified AppointmentModal.tsx
-- [ ] Step 3: Update Firestore rules
-
-## Notes & Patterns
-- Uses DraggableModal for all modals
-- CLINIC_ID imported from firebase.ts
-- Form state uses useState hooks (not form libraries)
-
-## Issues Found
-- Line 45 in AppointmentModal.tsx: potential null reference
-\`\`\`
-
-### Why this matters:
-- You have a large context window — use it to YOUR advantage
-- The context file is YOUR memory between sessions
-- It prevents re-reading the same files repeatedly
-- For multi-step tasks across 20+ iterations, this is ESSENTIAL
-- Update it at checkpoints AND whenever you discover something important`;
+  private conversationHistory: ChatMessage[] = [];
 
   register(context: vscode.ExtensionContext): vscode.ChatParticipant {
     const participant = vscode.chat.createChatParticipant('mimo', this.handleRequest.bind(this));
@@ -143,25 +23,13 @@ You MUST maintain a context memory file to handle large projects efficiently.
     return participant;
   }
 
-  private getApiKey(): string {
-    const config = vscode.workspace.getConfiguration('mimo');
-    const inspect = config.inspect<string>('apiKey');
-    return inspect?.workspaceValue || inspect?.globalValue || '';
-  }
-
-  private getBaseUrl(): string {
-    const config = vscode.workspace.getConfiguration('mimo');
-    const inspect = config.inspect<string>('baseUrl');
-    return inspect?.workspaceValue || inspect?.globalValue || 'https://token-plan-ams.xiaomimimo.com/v1';
-  }
-
   private async handleRequest(
     request: vscode.ChatRequest,
     context: vscode.ChatContext,
     stream: vscode.ChatResponseStream,
     token: vscode.CancellationToken
   ): Promise<void> {
-    const apiKey = this.getApiKey();
+    const { apiKey, baseUrl } = getApiConfig();
     if (!apiKey) {
       stream.markdown('⚠️ **MiMo API Key no configurada.** Usa `Ctrl+Shift+P` → "MiMo: Configure API Key"');
       return;
@@ -183,23 +51,17 @@ You MUST maintain a context memory file to handle large projects efficiently.
       userMessage += `\n\n[Current file: ${relPath}, line ${editor.selection.active.line + 1}]`;
     }
 
-    // Add to conversation history
+    // Add to conversation history and compress if needed
     this.conversationHistory.push({ role: 'user', content: userMessage });
+    this.conversationHistory = compressHistory(this.conversationHistory);
 
-    // Keep history manageable
-    if (this.conversationHistory.length > 30) {
-      // Keep system-relevant context but trim old messages
-      this.conversationHistory = this.conversationHistory.slice(-20);
-    }
-
-    const baseUrl = this.getBaseUrl();
-    const model = 'mimo-v2-pro';
     const maxIterations = 500; // Safety cap only
     const CHECKPOINT_INTERVAL = 20; // Force progress summary every N iterations
 
     try {
       let iteration = 0;
       let needsMoreToolCalls = true;
+      let lastToolName: string | undefined;
 
       while (needsMoreToolCalls && iteration < maxIterations) {
         if (token.isCancellationRequested) {
@@ -229,32 +91,62 @@ Continúa después del resumen.`
         }
 
         // Build messages array
-        const messages: ApiMessage[] = [
-          { role: 'system', content: this.systemPrompt },
+        const messages = [
+          { role: 'system', content: buildSystemPrompt() },
           ...this.conversationHistory
         ];
 
-        // Call MiMo API with tools
-        const response = await fetch(`${baseUrl}/chat/completions`, {
+        // Smart model selection
+        const modelId = pickModel(false, lastToolName);
+        const modelSpec = getModel(modelId);
+
+        const requestBody: Record<string, any> = {
+          model: modelId,
+          messages,
+          tools: vscode.workspace.getConfiguration('mimo').get('webSearch') ? [...TOOLS, WEB_SEARCH_TOOL] : TOOLS,
+          stream: false,
+          max_completion_tokens: Math.min(modelSpec.maxOutputTokens, 32768),
+          temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5
+        };
+
+        if (modelSpec.supportsThinking) {
+          requestBody.thinking = { type: 'enabled' };
+        }
+
+        let response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`
           },
-          body: JSON.stringify({
-            model,
-            messages,
-            tools: TOOLS,
-            stream: false, // Non-streaming for tool calls
-            max_tokens: 4096,
-            temperature: 0.3
-          }),
+          body: JSON.stringify(requestBody),
           signal: AbortSignal.timeout(120000)
         });
 
+        // Fallback: if Flash fails (not in plan), retry with Pro
+        if (!response.ok && modelId === 'mimo-v2-flash') {
+          const fallbackSpec = getModel('mimo-v2-pro');
+          requestBody.model = 'mimo-v2-pro';
+          requestBody.max_completion_tokens = Math.min(fallbackSpec.maxOutputTokens, 32768);
+          requestBody.thinking = { type: 'enabled' };
+          response = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(120000)
+          });
+        }
+
         if (!response.ok) {
           const errorText = await response.text();
-          stream.markdown(`❌ **Error de MiMo** (${response.status}): ${errorText}`);
+          if (errorText.includes('web_search') || errorText.includes('plugin')) {
+            stream.markdown(`**Web Search plugin not enabled.** Enable it at [platform.xiaomimimo.com](https://platform.xiaomimimo.com) > Plugin Management.\n\n${errorText}`);
+          } else {
+            stream.markdown(`**Error** (${response.status}): ${errorText}`);
+          }
           return;
         }
 
@@ -292,6 +184,7 @@ Continúa después del resumen.`
             stream.markdown(`\n🔧 \`${toolLabel}\`\n`);
 
             // Execute the tool
+            lastToolName = tc.function.name;
             const result = await executeTool(tc);
 
             // Show abbreviated result
@@ -336,12 +229,13 @@ Continúa después del resumen.`
 
   private formatToolCall(name: string, args: any): string {
     switch (name) {
-      case 'read_file': return `read_file ${args.path}`;
-      case 'write_file': return `write_file ${args.path} (${args.content?.length || 0} chars)`;
-      case 'edit_file': return `edit_file ${args.path}`;
-      case 'run_terminal': return `run: ${args.command}`;
-      case 'search_files': return `search "${args.pattern}"`;
-      case 'list_files': return `ls ${args.path || '.'}`;
+      case 'read_file': return `read ${args.path}${args.offset ? ':' + args.offset : ''}`;
+      case 'write_file': return `write ${args.path} (${args.content?.length || 0} chars)`;
+      case 'edit_file': return `edit ${args.path}${args.replace_all ? ' (all)' : ''}`;
+      case 'run_terminal': return `$ ${args.command}`;
+      case 'search_files': return `search "${args.pattern}"${args.glob ? ' in ' + args.glob : ''}`;
+      case 'list_files': return `ls ${args.path || '.'}${args.recursive ? ' -R' : ''}`;
+      case 'find_files': return `find ${args.pattern}`;
       case 'get_diagnostics': return `diagnostics ${args.path || 'all'}`;
       default: return `${name}(${JSON.stringify(args)})`;
     }
@@ -349,5 +243,6 @@ Continúa después del resumen.`
 
   clearHistory(): void {
     this.conversationHistory = [];
+    invalidatePromptCache();
   }
 }

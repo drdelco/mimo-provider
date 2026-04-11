@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init:*)",
+      "Bash(git remote:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(node -e ':*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" https://token-plan-ams.xiaomimimo.com/v1/models)",
+      "WebSearch",
+      "WebFetch(domain:platform.xiaomimimo.com)",
+      "WebFetch(domain:docs.litellm.ai)",
+      "WebFetch(domain:mimo-v2.org)",
+      "WebFetch(domain:explore.n1n.ai)",
+      "WebFetch(domain:mimo.xiaomi.com)",
+      "WebFetch(domain:www.mimo-v2.com)",
+      "WebFetch(domain:help.apiyi.com)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "WebFetch(domain:www.aimadetools.com)",
+      "WebFetch(domain:openrouter.ai)",
+      "WebFetch(domain:developer.puter.com)",
+      "WebFetch(domain:a2aprotocol.ai)",
+      "WebFetch(domain:www.cometapi.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "Bash(curl -s -L --max-time 15 \"https://platform.xiaomimimo.com/#/docs/api/chat/openai-api\")",
+      "Bash(curl -s -L --max-time 15 \"https://platform.xiaomimimo.com/api/docs\")",
+      "Bash(curl -s -L --max-time 15 \"https://platform.xiaomimimo.com/docs/api/chat/openai-api\")",
+      "Bash(curl -s -L --max-time 15 \"https://platform.xiaomimimo.com/llms.txt\")",
+      "Bash(curl -s -L --max-time 15 \"https://platform.xiaomimimo.com/docs/api/chat/openai-api.md\")",
+      "Bash(curl -s -L --max-time 15 \"https://platform.xiaomimimo.com/docs/usage-guide/tool-calling/web-search.md\")",
+      "Bash(curl -s -L --max-time 15 \"https://platform.xiaomimimo.com/docs/usage-guide/multimodal-understanding/image-understanding.md\")",
+      "Bash(curl -s -L --max-time 15 \"https://platform.xiaomimimo.com/docs/quick-start/model-hyperparameters.md\")",
+      "Bash(node -e \"const fs=require\\('fs'\\); const code=fs.readFileSync\\('c:/PROYECTOS/mimo-provider/out/webview.js','utf8'\\); const start=code.indexOf\\('return \\\\`<!DOCTYPE'\\); const scriptStart=code.indexOf\\('<script nonce=', start\\); const scriptEnd=code.indexOf\\('</script>', scriptStart\\); const script=code.substring\\(scriptStart, scriptEnd+9\\); const lines=script.split\\(String.fromCharCode\\(10\\)\\); for\\(let i=0;i<lines.length;i++\\){const l=lines[i]; if\\(l.includes\\('replace'\\) || l.includes\\('match'\\) || l.includes\\('split'\\) || l.includes\\('RegExp'\\)\\){console.log\\('L'+\\(i+1\\)+': '+l.trim\\(\\).substring\\(0,150\\)\\)}}\")",
+      "Bash(node test-extract.js)",
+      "Bash(node -e \"const fs=require\\('fs'\\); const js=fs.readFileSync\\('c:/PROYECTOS/mimo-provider/media/webview.js','utf8'\\); try{new Function\\(js\\);console.log\\('PARSE OK - '+js.length+' chars'\\)}catch\\(e\\){console.log\\('PARSE ERROR: '+e.message\\)}\")"
+    ]
+  }
+}

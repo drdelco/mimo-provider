@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0 (2026-04-11)
+
+### Fixes
+
+- **Panel editor buttons broken** — The editor tab panel (`MiMo: Open Chat Panel`) only handled 3 of 6 message types. Buttons like attach, stop, and file picker did not work. Now all message types are delegated to the shared handler.
+- **View routing hack** — Replaced `(chatViewProvider as any).view = { webview }` with a clean `setActiveWebview`/`clearActiveWebview` pattern. Panel and sidebar no longer corrupt each other's state.
+- **Progress messages dropped** — Backend sent `stream` type messages but the webview never rendered them. Added `stream` case to the message handler.
+- **Clear button broke quick actions** — After clicking "New", the welcome div was recreated without event listeners. Quick action buttons now re-bind correctly.
+- **Stale welcomeEl reference** — After clearing chat, `welcomeEl` pointed to a removed DOM node. Replaced with dynamic `getElementById` lookup.
+
+### Improvements
+
+- **Shared system prompt** — Extracted duplicated prompt from `chat.ts` and `webview.ts` into `prompt.ts` with a single `buildSystemPrompt()` function.
+- **Dynamic OS injection** — Shell type (Windows/macOS/Linux) is detected via `process.platform` and injected into the prompt. Eliminates a wasted tool call per session.
+- **Auto-load context files** — The extension now reads `CLAUDE.md`, `.mimo-context.md`, `.cursorrules`, `AGENTS.md`, `.claude/rules/*.md`, and `.github/copilot-instructions.md` at each request and injects them into the system prompt. Saves 5-10 tool calls at session start.
+- **Workspace info injected** — Workspace name and path are included in the prompt so MiMo knows where it is without a `list_files` call.
+- **Leaner prompt** — Removed verbose "Why this matters" sections, hardcoded template examples, and motivational text. Tool names now match actual function names. Added `get_diagnostics` to the suggested workflow after edits. Added language matching instruction.
+
 ## 0.1.0 (2026-04-10)
 
 ### Initial release
