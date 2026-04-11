@@ -211,10 +211,20 @@
         break;
 
       case "restored":
-        // Tab was restored from a previous session — show indicator
+        // Tab was restored — render previous conversation
         var welcome = document.getElementById("welcome");
         if (welcome) welcome.style.display = "none";
-        addMessage("Session restored from previous workspace.", "tool-msg");
+        if (msg.messages && msg.messages.length > 0) {
+          msg.messages.forEach(function (m) {
+            if (m.role === "user") {
+              addMessage(escapeHtml(m.content), "user-msg");
+            } else if (m.role === "assistant") {
+              addMessage(renderMarkdown(m.content), "assistant-msg");
+            }
+            sessionMessages++;
+          });
+          addMessage("Session restored — conversation history above, context preserved.", "tool-msg");
+        }
         break;
 
       case "filePicked":

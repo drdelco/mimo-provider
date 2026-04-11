@@ -41,9 +41,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Tell the webview its tabId so it can persist it via setState()
     panel.webview.postMessage({ type: 'init', tabId: id });
 
-    // If there's saved history, tell the webview to show a restored indicator
+    // If there's saved history, send it to the webview for rendering
     if (tabProvider.hasHistory()) {
-      panel.webview.postMessage({ type: 'restored' });
+      panel.webview.postMessage({ type: 'restored', messages: tabProvider.getHistoryForRestore() });
     }
 
     panel.webview.onDidReceiveMessage((message) => tabProvider.handleWebviewMessage(message));

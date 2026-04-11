@@ -39,6 +39,13 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
   /** Check if this provider has conversation history loaded */
   public hasHistory(): boolean { return this.conversationHistory.length > 0; }
 
+  /** Return history in a format the webview can render */
+  public getHistoryForRestore(): { role: string; content: string }[] {
+    return this.conversationHistory
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content && !m.tool_calls)
+      .map(m => ({ role: m.role, content: m.content }));
+  }
+
   /** Clean up persisted history for this tab */
   public removePersistedHistory() {
     if (this.extensionContext && this.tabId) {
