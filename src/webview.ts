@@ -255,6 +255,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       case 'sendMessage':
         if (this.isProcessing) {
           this.pendingMessages.push(message.text);
+          this.postMessage({ type: 'stream', text: '*(Message queued — will be incorporated in the next step)*\n' });
         } else {
           await this.handleUserMessage(message.text);
         }
