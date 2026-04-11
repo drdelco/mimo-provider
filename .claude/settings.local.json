@@ -54,7 +54,10 @@
       "Bash(git -C /c/PROYECTOS/mimo-provider rm --cached \"subidas a VSX market.txt\")",
       "Bash(git -C /c/PROYECTOS/mimo-provider reset HEAD~1 --soft)",
       "Bash(git -C /c/PROYECTOS/mimo-provider ls-files)",
-      "WebFetch(domain:token-plan-ams.xiaomimimo.com)"
+      "WebFetch(domain:token-plan-ams.xiaomimimo.com)",
+      "WebFetch(domain:platform.moonshot.ai)",
+      "WebFetch(domain:platform.kimi.ai)",
+      "WebFetch(domain:developers.openai.com)"
     ]
   }
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.7 (2026-04-12)
+
+### Web search fixes
+
+- **`webSearchEnabled: true`** parameter added to request body when using Xiaomi plugin — required by the API.
+- **Automatic fallback**: if Xiaomi web search plugin returns an error (400/plugin not enabled), the request is automatically retried with DuckDuckGo local search tools. No more dead-end errors.
+- User sees "*Xiaomi web search unavailable — switching to DuckDuckGo...*" when fallback activates.
+
 ## 0.7.6 (2026-04-12)
 
 ### Persistent tabs

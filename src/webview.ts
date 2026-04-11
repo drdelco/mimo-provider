@@ -130,15 +130,17 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         // Only think on first iteration and checkpoints — fast mode for tool calls
         const useThinking = modelSpec.supportsThinking && (iteration === 1 || iteration % CHECKPOINT_INTERVAL === 0);
 
+        const useXiaomiSearch = vscode.workspace.getConfiguration('mimo').get('webSearch');
         const requestBody: Record<string, any> = {
           model: modelId,
           messages,
-          tools: vscode.workspace.getConfiguration('mimo').get('webSearch') ? [...TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS],
+          tools: useXiaomiSearch ? [...TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS],
           stream: false,
           max_completion_tokens: Math.min(modelSpec.maxOutputTokens, 32768),
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5,
           thinking: { type: useThinking ? 'enabled' : 'disabled' }
         };
+        if (useXiaomiSearch) { requestBody.webSearchEnabled = true; }
 
         let response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
@@ -161,13 +163,25 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           });
         }
 
+        // Web search fallback: if Xiaomi plugin fails, retry with DuckDuckGo tools
+        if (!response.ok && useXiaomiSearch) {
+          const errorText = await response.text();
+          if (errorText.includes('web_search') || errorText.includes('webSearch') || errorText.includes('plugin')) {
+            this.postMessage({ type: 'stream', text: '*Xiaomi web search unavailable — switching to DuckDuckGo...*\n' });
+            requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
+            delete requestBody.webSearchEnabled;
+            response = await fetch(`${baseUrl}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+              body: JSON.stringify(requestBody),
+              signal: AbortSignal.timeout(300000)
+            });
+          }
+        }
+
         if (!response.ok) {
           const errorText = await response.text();
-          if (errorText.includes('web_search') || errorText.includes('plugin')) {
-            this.postMessage({ type: 'error', text: `Web Search plugin not enabled. Enable at platform.xiaomimimo.com > Plugin Management.` });
-          } else {
-            this.postMessage({ type: 'error', text: `Error ${response.status}: ${errorText}` });
-          }
+          this.postMessage({ type: 'error', text: `Error ${response.status}: ${errorText}` });
           return;
         }
 
