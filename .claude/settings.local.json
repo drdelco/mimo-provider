@@ -48,7 +48,8 @@
       "Bash(git -C /c/PROYECTOS/mimo-provider add .claude/settings.local.json)",
       "Bash(git -C /c/PROYECTOS/mimo-provider add -A)",
       "Bash(git -C /c/PROYECTOS/mimo-provider add package.json)",
-      "Bash(git -C /c/PROYECTOS/mimo-provider add package.json src/extension.ts)"
+      "Bash(git -C /c/PROYECTOS/mimo-provider add package.json src/extension.ts)",
+      "Bash(git -C /c/PROYECTOS/mimo-provider add CHANGELOG.md)"
     ]
   }
 }

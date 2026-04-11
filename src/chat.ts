@@ -56,7 +56,7 @@ export class MiMoChatParticipant {
     this.conversationHistory = compressHistory(this.conversationHistory);
 
     const maxIterations = 500; // Safety cap only
-    const CHECKPOINT_INTERVAL = 20; // Force progress summary every N iterations
+    const CHECKPOINT_INTERVAL = 10; // Force progress summary every N iterations
 
     try {
       let iteration = 0;
@@ -100,6 +100,9 @@ Continúa después del resumen.`
         const modelId = pickModel(false, lastToolName);
         const modelSpec = getModel(modelId);
 
+        // Only think on first iteration and at checkpoints — fast mode for tool calls
+        const useThinking = modelSpec.supportsThinking && (iteration === 1 || iteration % CHECKPOINT_INTERVAL === 0);
+
         const requestBody: Record<string, any> = {
           model: modelId,
           messages,
@@ -109,9 +112,7 @@ Continúa después del resumen.`
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5
         };
 
-        if (modelSpec.supportsThinking) {
-          requestBody.thinking = { type: 'enabled' };
-        }
+        requestBody.thinking = { type: useThinking ? 'enabled' : 'disabled' };
 
         let response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',

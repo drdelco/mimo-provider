@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 (2026-04-11)
+
+### Real-time progress feedback
+
+- **Step counter**: visible "Step N ..." indicator during tool execution — user always knows MiMo is alive
+- **Checkpoint summaries**: every 10 iterations (was 20), MiMo summarizes progress. Visible to the user, not just internal.
+- **Thinking optimization**: deep reasoning (chain-of-thought) only on first iteration and at checkpoints. Intermediate tool calls use fast mode — dramatically faster execution.
+- **JS error boundary**: `window.onerror` handler shows errors visually in the chat panel instead of failing silently.
+
 ## 0.5.4 (2026-04-11)
 
 - **M icon**: kept in editor title bar only, removed from status bar

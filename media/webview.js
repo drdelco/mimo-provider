@@ -1,15 +1,20 @@
 (function () {
   "use strict";
 
-  const vscode = acquireVsCodeApi();
-  const messagesEl = document.getElementById("messages");
-  const inputEl = document.getElementById("input");
-  const sendBtn = document.getElementById("sendBtn");
-  const addContextBtn = document.getElementById("addContextBtn");
-  const tokenUsageBtn = document.getElementById("tokenUsageBtn");
-  const stopBtn = document.getElementById("stopBtn");
-  const newChatBtn = document.getElementById("newChatBtn");
-  const attachedFilesEl = document.getElementById("attachedFiles");
+  window.onerror = function(msg, src, line) {
+    document.body.insertAdjacentHTML("afterbegin",
+      '<div style="background:#5a1d1d;color:#f88;padding:8px;font-size:11px;font-family:monospace;">JS error: ' + msg + ' (line ' + line + ')</div>');
+  };
+
+  var vscode = acquireVsCodeApi();
+  var messagesEl = document.getElementById("messages");
+  var inputEl = document.getElementById("input");
+  var sendBtn = document.getElementById("sendBtn");
+  var addContextBtn = document.getElementById("addContextBtn");
+  var tokenUsageBtn = document.getElementById("tokenUsageBtn");
+  var stopBtn = document.getElementById("stopBtn");
+  var newChatBtn = document.getElementById("newChatBtn");
+  var attachedFilesEl = document.getElementById("attachedFiles");
 
   let attachedFiles = [];
   let totalTokensUsed = 0;
@@ -195,6 +200,21 @@
         stopBtn.style.display = "flex";
         break;
 
+      case "progress":
+        // Show/update a step counter so the user knows it's alive
+        var progressEl = document.getElementById("progressIndicator");
+        if (!progressEl) {
+          progressEl = document.createElement("div");
+          progressEl.id = "progressIndicator";
+          progressEl.className = "message tool-msg";
+          progressEl.style.opacity = "0.7";
+          progressEl.style.fontStyle = "italic";
+          messagesEl.appendChild(progressEl);
+        }
+        progressEl.textContent = "Step " + msg.step + " ...";
+        scrollToBottom();
+        break;
+
       case "assistantMessage":
         // Always create a NEW div at the END — after all tool activity
         currentAssistantDiv = addMessage(renderMarkdown(msg.text), "assistant-msg");
@@ -237,6 +257,8 @@
       case "streamEnd":
         currentAssistantDiv = null;
         stopBtn.style.display = "none";
+        var doneEl = document.getElementById("progressIndicator");
+        if (doneEl) doneEl.remove();
         inputEl.focus();
         break;
 

@@ -76,7 +76,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
     this.postMessage({ type: 'startStreaming' });
 
     const maxIterations = 500;
-    const CHECKPOINT_INTERVAL = 20;
+    const CHECKPOINT_INTERVAL = 10;
 
     try {
       let iteration = 0;
@@ -86,6 +86,9 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       while (needsMoreToolCalls && iteration < maxIterations) {
         iteration++;
 
+        // Show progress to user — they see this in real time
+        this.postMessage({ type: 'progress', step: iteration, max: maxIterations });
+
         while (this.pendingMessages.length > 0) {
           const queuedMsg = this.pendingMessages.shift()!;
           this.conversationHistory.push({
@@ -94,10 +97,12 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           });
         }
 
-        if (iteration > 1 && iteration % CHECKPOINT_INTERVAL === 1) {
+        // Checkpoint every N iterations — visible to user AND sent to model
+        if (iteration > 1 && iteration % CHECKPOINT_INTERVAL === 0) {
+          this.postMessage({ type: 'stream', text: `\n**[Checkpoint — step ${iteration}]** Requesting progress summary...\n` });
           this.conversationHistory.push({
             role: 'user',
-            content: `CHECKPOINT: ${iteration - 1} iterations done. Summarize: 1) what you did 2) what remains 3) if stuck, say so. Then continue.`
+            content: `CHECKPOINT: ${iteration} iterations done. Give a brief summary: 1) what you did 2) what remains 3) if stuck, say so clearly. Then continue.`
           });
         }
 
@@ -109,6 +114,10 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         const modelId = pickModel(false, lastToolName);
         const modelSpec = getModel(modelId);
 
+        // Only enable thinking on first iteration and after checkpoints.
+        // Intermediate tool-call iterations use fast mode (no deep reasoning).
+        const useThinking = modelSpec.supportsThinking && (iteration === 1 || iteration % CHECKPOINT_INTERVAL === 0);
+
         const requestBody: Record<string, any> = {
           model: modelId,
           messages,
@@ -118,9 +127,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5
         };
 
-        if (modelSpec.supportsThinking) {
-          requestBody.thinking = { type: 'enabled' };
-        }
+        requestBody.thinking = { type: useThinking ? 'enabled' : 'disabled' };
 
         let response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
