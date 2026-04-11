@@ -58,14 +58,6 @@ export function activate(context: vscode.ExtensionContext) {
     panels.set(id, { panel, provider: tabProvider });
   }
 
-  // Status bar button
-  const statusBarBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  statusBarBtn.text = "$(mimo-logo)";
-  statusBarBtn.tooltip = 'New MiMo Chat';
-  statusBarBtn.command = 'mimo.openChat';
-  statusBarBtn.show();
-  context.subscriptions.push(statusBarBtn);
-
   // Open chat = always new tab (multi-agent)
   context.subscriptions.push(
     vscode.commands.registerCommand('mimo.openChat', openNewChatPanel)

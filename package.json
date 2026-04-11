@@ -84,7 +84,15 @@
         "title": "MiMo: Clear Chat History"
       }
     ],
-    "menus": {},
+    "menus": {
+      "editor/title": [
+        {
+          "command": "mimo.openChat",
+          "group": "navigation",
+          "when": "true"
+        }
+      ]
+    },
     "configuration": {
       "title": "MiMo Provider",
       "properties": {
