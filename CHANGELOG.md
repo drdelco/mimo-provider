@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.7.5 (2026-04-12)
+## 0.7.6 (2026-04-12)
+
+### Persistent tabs
+
+- Tabs now **persist across VS Code restarts**. Open tabs are restored with their full conversation history when you reopen the workspace.
+- Each tab stores its history independently via `workspaceState`.
+- "Session restored" indicator shown on restored tabs.
 
 ### Web search
 
