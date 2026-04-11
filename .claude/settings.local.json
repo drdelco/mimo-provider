@@ -46,7 +46,9 @@
       "Bash(node -e \"const d=require\\('fs'\\).readFileSync\\(0,'utf8'\\);const items=JSON.parse\\(d\\);items.forEach\\(i=>console.log\\(i.name\\)\\)\")",
       "Bash(git -C /c/PROYECTOS/mimo-provider status --short)",
       "Bash(git -C /c/PROYECTOS/mimo-provider add .claude/settings.local.json)",
-      "Bash(git -C /c/PROYECTOS/mimo-provider add -A)"
+      "Bash(git -C /c/PROYECTOS/mimo-provider add -A)",
+      "Bash(git -C /c/PROYECTOS/mimo-provider add package.json)",
+      "Bash(git -C /c/PROYECTOS/mimo-provider add package.json src/extension.ts)"
     ]
   }
 }
