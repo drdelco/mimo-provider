@@ -50,7 +50,7 @@ ${git}
 3. Prefer \`edit_file\` for changes. \`write_file\` only for new files or full rewrites.
 4. After edits, run \`get_diagnostics\` to verify no errors were introduced.
 5. Test with \`run_terminal\` when appropriate (builds, tests, linters).
-6. Summarize what you did and what the user should verify.
+6. IMPORTANT: Put your final summary AFTER all tool work is complete. Do NOT lead with "Done!" or a summary — the user sees tool activity in real time, so your final message should be a concise wrap-up at the end, not a preamble.
 
 ## Rules
 - NEVER guess file paths — use \`find_files\` or \`search_files\` first.

@@ -32,7 +32,12 @@
       "Bash(curl -s -L --max-time 15 \"https://platform.xiaomimimo.com/docs/quick-start/model-hyperparameters.md\")",
       "Bash(node -e \"const fs=require\\('fs'\\); const code=fs.readFileSync\\('c:/PROYECTOS/mimo-provider/out/webview.js','utf8'\\); const start=code.indexOf\\('return \\\\`<!DOCTYPE'\\); const scriptStart=code.indexOf\\('<script nonce=', start\\); const scriptEnd=code.indexOf\\('</script>', scriptStart\\); const script=code.substring\\(scriptStart, scriptEnd+9\\); const lines=script.split\\(String.fromCharCode\\(10\\)\\); for\\(let i=0;i<lines.length;i++\\){const l=lines[i]; if\\(l.includes\\('replace'\\) || l.includes\\('match'\\) || l.includes\\('split'\\) || l.includes\\('RegExp'\\)\\){console.log\\('L'+\\(i+1\\)+': '+l.trim\\(\\).substring\\(0,150\\)\\)}}\")",
       "Bash(node test-extract.js)",
-      "Bash(node -e \"const fs=require\\('fs'\\); const js=fs.readFileSync\\('c:/PROYECTOS/mimo-provider/media/webview.js','utf8'\\); try{new Function\\(js\\);console.log\\('PARSE OK - '+js.length+' chars'\\)}catch\\(e\\){console.log\\('PARSE ERROR: '+e.message\\)}\")"
+      "Bash(node -e \"const fs=require\\('fs'\\); const js=fs.readFileSync\\('c:/PROYECTOS/mimo-provider/media/webview.js','utf8'\\); try{new Function\\(js\\);console.log\\('PARSE OK - '+js.length+' chars'\\)}catch\\(e\\){console.log\\('PARSE ERROR: '+e.message\\)}\")",
+      "Bash(git -C /c/PROYECTOS/mimo-provider status)",
+      "Bash(git -C /c/PROYECTOS/mimo-provider diff --stat)",
+      "Bash(git -C /c/PROYECTOS/mimo-provider log --oneline -5)",
+      "Bash(git -C /c/PROYECTOS/mimo-provider add src/prompt.ts .claude/settings.local.json)",
+      "Bash(git -C /c/PROYECTOS/mimo-provider commit -m ':*)"
     ]
   }
 }
