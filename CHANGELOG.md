@@ -1,77 +1,116 @@
 # Changelog
 
+## 0.5.1 (2026-04-11)
+
+- **Web search fix**: web_search tool only sent when `mimo.webSearch` setting is enabled (fixes API 400 error)
+- **Feedback order**: MiMo now puts the summary after tool activity, not before
+- **Chatbox width**: max-width 80% centered in tab view
+
+## 0.5.0 (2026-04-11)
+
+### External webview architecture
+
+Moved all browser JavaScript and CSS to external files (`media/webview.js`, `media/webview.css`). This eliminates the template literal escaping bugs that prevented buttons and Enter from working. The webview script is now standard JavaScript with zero escape layers.
+
+### New chatbox design
+
+Clean input area inspired by Claude Code:
+- Input row with rounded border, integrated send button
+- Toolbar below: `+ File`, `Usage` (left), `Stop`, `New chat` (right)
+- No header — clean and direct
+- Assistant messages without bubbles
+- Discrete tool call display
+
+### Multi-tab (multi-agent)
+
+Each `MiMo: Open Chat Panel` opens a **new independent tab** (`MiMo #1`, `MiMo #2`, ...). Each tab has its own conversation history — run multiple agents in parallel on different tasks.
+
+## 0.4.0 (2026-04-11)
+
+### Correct model specifications
+
+Updated from API documentation at platform.xiaomimimo.com:
+- **MiMo V2 Pro**: 1M context, 128K output (was 262K/8K)
+- **MiMo V2 Flash**: 256K context, 64K output (was 262K/8K)
+- **MiMo V2 Omni**: NEW — 256K context, 128K output, multimodal (images, audio, video)
+
+### Smart model switching
+
+Automatic model selection per iteration:
+- **Pro**: complex reasoning, editing, writing (default)
+- **Omni**: when images are involved (`read_image` tool)
+- **Flash**: simple tool calls (read, search, list) — only if enabled and available in plan
+
+### API key auto-detection
+
+- `tp-*` keys route to `token-plan-ams.xiaomimimo.com/v1`
+- `sk-*` keys route to `api.xiaomimimo.com/v1`
+- Eliminates 404 errors from wrong endpoint
+
+### Web search
+
+Web search tool available via MiMo API (requires plugin activation at platform.xiaomimimo.com).
+
+### Vision support
+
+New `read_image` tool: reads local images (PNG, JPG, GIF, WebP, BMP) and analyzes them using MiMo V2 Omni. For screenshots, UI mockups, diagrams.
+
+### Deep thinking
+
+`thinking: { type: "enabled" }` sent for Pro and Omni models. Chain-of-thought reasoning for better quality on complex tasks.
+
+### `max_completion_tokens`
+
+Correct API parameter (was `max_tokens`). Pro can output up to 128K tokens per response.
+
+## 0.3.0 (2026-04-11)
+
+### Tools rewrite (cross-platform)
+
+All tools rewritten in pure Node.js — no more shell dependency (`grep`, `find`, `ls`). Works on Windows, macOS, and Linux.
+
+- **read_file**: line numbers (`cat -n` style), `offset`/`limit` for ranges, 2MB file guard
+- **edit_file**: uniqueness check (fails if `old_content` matches multiple locations), `replace_all` parameter, near-match hints on failure
+- **run_terminal**: async (`exec` not `execSync`) — doesn't block the IDE. Timeout up to 300s. Catastrophic command guard
+- **search_files**: pure Node.js regex search, `context_lines` parameter, binary file skip
+- **list_files**: sorted dirs-first, file sizes, glob filter
+- **find_files**: NEW — uses `vscode.workspace.findFiles` for fast glob search
+- **get_diagnostics**: increased limits (80 items)
+
+### Context compression
+
+When conversation exceeds 40 messages, old messages are compressed into a structured summary (files read/modified, commands run, last assistant response) instead of being dropped. No API calls needed — deterministic extraction.
+
+### Git awareness
+
+System prompt includes: current branch, git user, modified files (`git status`), recent commits.
+
+### Prompt caching
+
+System prompt cached for 60s. Invalidated on "New Chat".
+
+### Conversation persistence
+
+History saved to `workspaceState` — survives IDE restarts.
+
 ## 0.2.0 (2026-04-11)
 
 ### Fixes
 
-- **Panel editor buttons broken** — The editor tab panel (`MiMo: Open Chat Panel`) only handled 3 of 6 message types. Buttons like attach, stop, and file picker did not work. Now all message types are delegated to the shared handler.
-- **View routing hack** — Replaced `(chatViewProvider as any).view = { webview }` with a clean `setActiveWebview`/`clearActiveWebview` pattern. Panel and sidebar no longer corrupt each other's state.
-- **Progress messages dropped** — Backend sent `stream` type messages but the webview never rendered them. Added `stream` case to the message handler.
-- **Clear button broke quick actions** — After clicking "New", the welcome div was recreated without event listeners. Quick action buttons now re-bind correctly.
-- **Stale welcomeEl reference** — After clearing chat, `welcomeEl` pointed to a removed DOM node. Replaced with dynamic `getElementById` lookup.
+- Panel editor buttons — all message types now delegated to shared handler
+- View routing — clean `setActiveWebview`/`clearActiveWebview` pattern
+- Progress messages — added `stream` case to webview message handler
+- Clear button — quick action listeners re-bound after clearing
+- Stale DOM reference — dynamic `getElementById` lookup
 
 ### Improvements
 
-- **Shared system prompt** — Extracted duplicated prompt from `chat.ts` and `webview.ts` into `prompt.ts` with a single `buildSystemPrompt()` function.
-- **Dynamic OS injection** — Shell type (Windows/macOS/Linux) is detected via `process.platform` and injected into the prompt. Eliminates a wasted tool call per session.
-- **Auto-load context files** — The extension now reads `CLAUDE.md`, `.mimo-context.md`, `.cursorrules`, `AGENTS.md`, `.claude/rules/*.md`, and `.github/copilot-instructions.md` at each request and injects them into the system prompt. Saves 5-10 tool calls at session start.
-- **Workspace info injected** — Workspace name and path are included in the prompt so MiMo knows where it is without a `list_files` call.
-- **Leaner prompt** — Removed verbose "Why this matters" sections, hardcoded template examples, and motivational text. Tool names now match actual function names. Added `get_diagnostics` to the suggested workflow after edits. Added language matching instruction.
+- Shared system prompt (`prompt.ts`)
+- Dynamic OS injection via `process.platform`
+- Auto-load context files (CLAUDE.md, .cursorrules, etc.)
+- Workspace info in prompt
+- Leaner prompt — removed verbose sections
 
 ## 0.1.0 (2026-04-10)
 
-### Initial release
-
-**Models:**
-- MiMo V2 Pro — advanced reasoning model
-- MiMo V2 Flash — fast response model
-
-**Chat Panel:**
-- Dedicated sidebar with chat interface (Activity Bar icon)
-- Full conversation history with context
-- Quick action buttons (Explain, Refactor, Debug, Test)
-- Markdown rendering with code highlighting
-- "Insert into editor" for generated code
-- New chat / clear history
-
-**Coding Agent (Tool Calling):**
-- `read_file` — read file contents
-- `write_file` — create/overwrite files
-- `edit_file` — surgical edits to existing files
-- `run_terminal` — execute shell commands
-- `search_files` — grep search across codebase
-- `list_files` — list directory contents
-- `get_diagnostics` — read VS Code errors/warnings
-
-**Integration:**
-- VS Code Language Model Chat Provider (model picker)
-- Chat Participant (`@MiMo` in native chat)
-- API key management (synced User + Workspace)
-- Connection test command
-- Custom icon (M in gray, works light/dark)
-
-### Enhanced (same day)
-
-**Chat UX:**
-- Enter to send, Shift+Enter for new line
-- 📎 Attach files as context — read and injected into conversation
-- 📊 Token usage tracker with link to MiMo Platform quota
-- ⏹ Stop button — appears during processing, aborts immediately
-- Live message injection — send messages while MiMo is working, incorporated mid-task
-- Sober styling consistent with Antigravity/VS Code themes
-
-**Agent Intelligence:**
-- 500 iteration safety cap (up from 15)
-- Progress checkpoint every 20 iterations — MiMo summarizes status
-- Shell detection — auto-detects Windows (CMD/PowerShell) vs Unix (bash)
-- Progress feedback — MiMo explains each step as it works
-
-**Context Memory:**
-- Reads existing context files at session start: CLAUDE.md, .claude/rules/, .agent/, AGENTS.md, .cursorrules, etc.
-- Maintains `.mimo-context.md` as persistent project memory across sessions
-- Updates context file during checkpoints and when discovering important info
-
-**Icons:**
-- Official Xiaomi MiMo logo for marketplace icon
-- Official "M" letter for Activity Bar, Editor Title Bar, and Status Bar
-- Custom icon font (`contributes.icons`) for VS Code integration
+Initial release with MiMo V2 Pro and Flash models, chat panel, 7 coding tools, VS Code chat participant integration.
