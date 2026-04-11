@@ -23,8 +23,8 @@ export interface ChatMessage {
  */
 export function compressHistory(
   messages: ChatMessage[],
-  threshold = 40,
-  keepRecent = 20
+  threshold = 25,
+  keepRecent = 15
 ): ChatMessage[] {
   if (messages.length <= threshold) return messages;
 

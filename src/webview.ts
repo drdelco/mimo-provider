@@ -126,7 +126,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(120000)
+          signal: AbortSignal.timeout(300000)
         });
 
         // Flash fallback to Pro
@@ -139,7 +139,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
             body: JSON.stringify(requestBody),
-            signal: AbortSignal.timeout(120000)
+            signal: AbortSignal.timeout(300000)
           });
         }
 
@@ -174,7 +174,9 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
             lastToolName = tc.function.name;
             const result = await executeTool(tc);
             this.postMessage({ type: 'toolResult', name: tc.function.name, result: result.length > 2000 ? result.substring(0, 2000) + '\n...' : result });
-            this.conversationHistory.push({ role: 'tool', content: result, tool_call_id: tc.id });
+            // Truncate tool results in history to avoid bloating subsequent requests
+            const historyResult = result.length > 4000 ? result.substring(0, 4000) + '\n... (truncated)' : result;
+            this.conversationHistory.push({ role: 'tool', content: historyResult, tool_call_id: tc.id });
           }
         } else {
           needsMoreToolCalls = false;

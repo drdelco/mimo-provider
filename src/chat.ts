@@ -120,7 +120,7 @@ Continúa después del resumen.`
             'Authorization': `Bearer ${apiKey}`
           },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(120000)
+          signal: AbortSignal.timeout(300000)
         });
 
         // Fallback: if Flash fails (not in plan), retry with Pro
@@ -136,7 +136,7 @@ Continúa después del resumen.`
               'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify(requestBody),
-            signal: AbortSignal.timeout(120000)
+            signal: AbortSignal.timeout(300000)
           });
         }
 
@@ -196,7 +196,7 @@ Continúa después del resumen.`
             // Add tool result to history
             this.conversationHistory.push({
               role: 'tool',
-              content: result,
+              content: result.length > 4000 ? result.substring(0, 4000) + '\n... (truncated)' : result,
               tool_call_id: tc.id
             });
           }

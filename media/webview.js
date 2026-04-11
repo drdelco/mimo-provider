@@ -191,21 +191,20 @@
         break;
 
       case "startStreaming":
-        currentAssistantDiv = addMessage("", "assistant-msg");
+        currentAssistantDiv = null;
         stopBtn.style.display = "flex";
         break;
 
       case "assistantMessage":
-        if (currentAssistantDiv) {
-          currentAssistantDiv.innerHTML = renderMarkdown(msg.text);
-          var code = extractCode(msg.text);
-          if (code) {
-            var btn = document.createElement("button");
-            btn.className = "insert-btn";
-            btn.textContent = "Insert into editor";
-            btn.onclick = function () { vscode.postMessage({ type: "insertCode", code: code }); };
-            currentAssistantDiv.appendChild(btn);
-          }
+        // Always create a NEW div at the END — after all tool activity
+        currentAssistantDiv = addMessage(renderMarkdown(msg.text), "assistant-msg");
+        var code = extractCode(msg.text);
+        if (code) {
+          var btn = document.createElement("button");
+          btn.className = "insert-btn";
+          btn.textContent = "Insert into editor";
+          btn.onclick = function () { vscode.postMessage({ type: "insertCode", code: code }); };
+          currentAssistantDiv.appendChild(btn);
         }
         scrollToBottom();
         break;
