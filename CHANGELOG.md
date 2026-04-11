@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.5 (2026-04-12)
+
+### Web search
+
+- **Xiaomi Web Search plugin** (`mimo.webSearch: true`, default): uses the native server-side web search plugin. Requires the plugin to be enabled at platform.xiaomimimo.com.
+- **DuckDuckGo fallback** (`mimo.webSearch: false`): two new local function tools — `web_search` (DuckDuckGo Lite/HTML) and `fetch_url` (fetches any public URL as plain text). Free, no API key needed.
+- **System prompt hardened**: explicit instructions to never use `curl`/`wget`/`Invoke-WebRequest` for web searches, never invent URLs, and use the provided search tools instead.
+- Web search is now **always available** — either via Xiaomi plugin or local fallback. No more dead-end when the model needs online information.
+
 ## 0.7.0 (2026-04-12)
 
 ### Visible step-by-step feedback

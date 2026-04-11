@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { TOOLS, WEB_SEARCH_TOOL, executeTool, ToolCall } from './tools';
+import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall } from './tools';
 import { buildSystemPrompt, invalidatePromptCache } from './prompt';
 import { ChatMessage, compressHistory } from './context';
 import { pickModel, getModel, getApiConfig } from './provider';
@@ -106,7 +106,7 @@ Continúa después del resumen.`
         const requestBody: Record<string, any> = {
           model: modelId,
           messages,
-          tools: vscode.workspace.getConfiguration('mimo').get('webSearch') ? [...TOOLS, WEB_SEARCH_TOOL] : TOOLS,
+          tools: vscode.workspace.getConfiguration('mimo').get('webSearch') ? [...TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS],
           stream: false,
           max_completion_tokens: Math.min(modelSpec.maxOutputTokens, 32768),
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5

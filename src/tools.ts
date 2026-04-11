@@ -173,13 +173,47 @@ export const TOOLS: ToolDefinition[] = [
   }
 ];
 
-/** Web search tool definition sent to MiMo API alongside function tools */
+/** Xiaomi native web search plugin — sent as a special tool type (server-side) */
 export const WEB_SEARCH_TOOL = {
   type: 'web_search' as const,
   force_search: false,
   max_keyword: 3,
   limit: 5
 };
+
+/** Local web search tools — used as fallback when Xiaomi plugin is not enabled */
+export const LOCAL_WEB_TOOLS: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description: 'Search the web using DuckDuckGo. Returns titles, URLs, and snippets. Use for current events, documentation, legal references, or any external information.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+          max_results: { type: 'number', description: 'Max results to return (default: 8, max: 15)' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'fetch_url',
+      description: 'Fetch a web page and extract its text content. Use to read documentation, articles, or any public URL. Do NOT use for search engines — use web_search instead.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Full URL to fetch (https://)' },
+          max_chars: { type: 'number', description: 'Max characters to return (default: 12000)' }
+        },
+        required: ['url']
+      }
+    }
+  }
+];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -641,10 +675,219 @@ export async function executeTool(toolCall: ToolCall): Promise<string> {
         }
       }
 
+      // ===== WEB SEARCH (DuckDuckGo fallback) =====
+      case 'web_search': {
+        const query = args.query;
+        const maxResults = Math.min(args.max_results || 8, 15);
+        if (!query) return 'Error: query is required';
+
+        try {
+          // DuckDuckGo Lite — lightweight HTML, no JS required
+          const params = new URLSearchParams({ q: query, kl: '' });
+          const resp = await fetch('https://lite.duckduckgo.com/lite/', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            body: params.toString(),
+            signal: AbortSignal.timeout(15000)
+          });
+
+          if (!resp.ok) return `Search failed: HTTP ${resp.status}`;
+
+          const html = await resp.text();
+          const results = parseDuckDuckGoLite(html, maxResults);
+
+          if (results.length === 0) return `No results found for: ${query}`;
+
+          return results.map((r, i) =>
+            `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`
+          ).join('\n\n');
+        } catch (err: any) {
+          // Fallback: try DuckDuckGo HTML
+          try {
+            const resp = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+              signal: AbortSignal.timeout(15000)
+            });
+            if (!resp.ok) return `Search failed: ${err.message}`;
+            const html = await resp.text();
+            const results = parseDuckDuckGoHtml(html, maxResults);
+            if (results.length === 0) return `No results found for: ${query}`;
+            return results.map((r, i) =>
+              `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`
+            ).join('\n\n');
+          } catch (err2: any) {
+            return `Web search failed: ${err.message}. Fallback also failed: ${err2.message}`;
+          }
+        }
+      }
+
+      // ===== FETCH URL =====
+      case 'fetch_url': {
+        const url = args.url;
+        const maxChars = Math.min(args.max_chars || 12000, 30000);
+        if (!url) return 'Error: url is required';
+        if (!url.startsWith('http')) return 'Error: url must start with http:// or https://';
+
+        try {
+          const resp = await fetch(url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'es,en;q=0.9'
+            },
+            signal: AbortSignal.timeout(20000),
+            redirect: 'follow'
+          });
+
+          if (!resp.ok) return `Fetch failed: HTTP ${resp.status} ${resp.statusText}`;
+
+          const contentType = resp.headers.get('content-type') || '';
+          const text = await resp.text();
+
+          if (contentType.includes('application/json')) {
+            return text.substring(0, maxChars);
+          }
+
+          // Strip HTML to plain text
+          const clean = htmlToText(text);
+          if (clean.length === 0) return 'Page returned no readable text content.';
+          if (clean.length > maxChars) {
+            return clean.substring(0, maxChars) + '\n\n... (truncated)';
+          }
+          return clean;
+        } catch (err: any) {
+          return `Fetch failed: ${err.message}`;
+        }
+      }
+
       default:
         return `Unknown tool: ${toolCall.function.name}`;
     }
   } catch (error: any) {
     return `Tool error (${toolCall.function.name}): ${error.message}`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Web search helpers
+// ---------------------------------------------------------------------------
+
+interface SearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+/** Parse DuckDuckGo Lite HTML results */
+function parseDuckDuckGoLite(html: string, max: number): SearchResult[] {
+  const results: SearchResult[] = [];
+
+  // DuckDuckGo Lite uses table rows: link in <a class="result-link">, snippet in <td class="result-snippet">
+  // Pattern: find all result links and their associated snippets
+  const linkRegex = /<a[^>]+class="result-link"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const snippetRegex = /<td[^>]+class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
+
+  const links: { url: string; title: string }[] = [];
+  let m;
+  while ((m = linkRegex.exec(html)) !== null && links.length < max) {
+    links.push({ url: stripTags(m[1]).trim(), title: stripTags(m[2]).trim() });
+  }
+
+  const snippets: string[] = [];
+  while ((m = snippetRegex.exec(html)) !== null && snippets.length < max) {
+    snippets.push(stripTags(m[1]).trim());
+  }
+
+  // If structured parsing didn't work, try a more generic approach
+  if (links.length === 0) {
+    // Generic: find all <a> with http hrefs that look like results
+    const genericLink = /<a[^>]+href="(https?:\/\/(?!lite\.duckduckgo|duckduckgo)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const seen = new Set<string>();
+    while ((m = genericLink.exec(html)) !== null && links.length < max) {
+      const url = m[1];
+      const title = stripTags(m[2]).trim();
+      if (title.length > 3 && !seen.has(url) && !url.includes('duckduckgo.com')) {
+        seen.add(url);
+        links.push({ url, title });
+      }
+    }
+  }
+
+  for (let i = 0; i < links.length; i++) {
+    results.push({
+      title: links[i].title || '(no title)',
+      url: links[i].url,
+      snippet: snippets[i] || ''
+    });
+  }
+
+  return results;
+}
+
+/** Parse DuckDuckGo HTML (full version) results */
+function parseDuckDuckGoHtml(html: string, max: number): SearchResult[] {
+  const results: SearchResult[] = [];
+
+  // DuckDuckGo HTML uses <a class="result__a"> for links and <a class="result__snippet"> for snippets
+  const resultRegex = /<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const snippetRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+
+  const links: { url: string; title: string }[] = [];
+  let m;
+  while ((m = resultRegex.exec(html)) !== null && links.length < max) {
+    let url = stripTags(m[1]).trim();
+    // DDG wraps URLs through a redirect — extract the real URL
+    const uddg = url.match(/uddg=([^&]+)/);
+    if (uddg) url = decodeURIComponent(uddg[1]);
+    links.push({ url, title: stripTags(m[2]).trim() });
+  }
+
+  const snippets: string[] = [];
+  while ((m = snippetRegex.exec(html)) !== null && snippets.length < max) {
+    snippets.push(stripTags(m[1]).trim());
+  }
+
+  for (let i = 0; i < links.length; i++) {
+    results.push({
+      title: links[i].title || '(no title)',
+      url: links[i].url,
+      snippet: snippets[i] || ''
+    });
+  }
+
+  return results;
+}
+
+/** Strip HTML tags from a string */
+function stripTags(html: string): string {
+  return html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
+/** Convert HTML to readable plain text */
+function htmlToText(html: string): string {
+  // Remove script, style, nav, header, footer
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+    .replace(/<header[\s\S]*?<\/header>/gi, '')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, '');
+
+  // Convert block elements to newlines
+  text = text.replace(/<\/?(p|div|br|h[1-6]|li|tr|blockquote|section|article)[^>]*>/gi, '\n');
+
+  // Strip remaining tags
+  text = stripTags(text);
+
+  // Collapse whitespace
+  text = text.replace(/[ \t]+/g, ' ');
+  text = text.replace(/\n{3,}/g, '\n\n');
+  text = text.trim();
+
+  return text;
 }
