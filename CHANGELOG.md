@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.4 (2026-04-11)
+
+- **M icon**: kept in editor title bar only, removed from status bar
+- **Publisher**: changed to `drdelco` to match Open VSX account (eliminates unverified namespace warning)
+
+## 0.5.3 (2026-04-11)
+
+- **Response order fix**: assistant summary now appears AFTER tool activity (was rendering before all tool calls)
+- **Timeout**: increased to 300s (was 120s) for thinking-enabled models
+- **History bloat**: tool results truncated to 4K chars in conversation history
+- **Context compression**: threshold lowered to 25 messages (was 40), keeps last 15 + structured summary
+
+## 0.5.2 (2026-04-11)
+
+- Updated README with all current features (3 models, 9 tools, multi-tab, vision, web search, API key auto-detection)
+- Updated CHANGELOG with all versions
+
 ## 0.5.1 (2026-04-11)
 
 - **Web search fix**: web_search tool only sent when `mimo.webSearch` setting is enabled (fixes API 400 error)
