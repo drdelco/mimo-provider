@@ -3,11 +3,11 @@ import { MiMoProvider } from './provider';
 import { MiMoChatParticipant } from './chat';
 import { MiMoChatViewProvider } from './webview';
 
-// Track multiple chat panels for multi-agent
-let panelCounter = 0;
 const panels = new Map<number, { panel: vscode.WebviewPanel; provider: MiMoChatViewProvider }>();
 
 export function activate(context: vscode.ExtensionContext) {
+  // Persistent tab counter — survives extension reloads
+  let panelCounter = context.globalState.get<number>('mimo.panelCounter', 0);
   // Register the model provider
   const provider = new MiMoProvider();
   context.subscriptions.push(
@@ -30,6 +30,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Open a NEW chat tab (each tab = independent conversation)
   function openNewChatPanel() {
     panelCounter++;
+    context.globalState.update('mimo.panelCounter', panelCounter);
     const id = panelCounter;
 
     // Each tab gets its own provider instance with its own conversation

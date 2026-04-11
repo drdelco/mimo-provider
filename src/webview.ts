@@ -265,6 +265,9 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         this.pendingMessages = [];
         this.postMessage({ type: 'streamEnd' });
         break;
+      case 'openNewTab':
+        vscode.commands.executeCommand('mimo.openChat');
+        break;
       case 'clearHistory':
         this.clearHistory();
         break;
@@ -341,7 +344,8 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       </div>
       <div class="right">
         <button id="stopBtn" class="toolbar-btn danger" title="Stop" style="display:none">Stop</button>
-        <button id="newChatBtn" class="toolbar-btn" title="New chat">New chat</button>
+        <button id="newTabBtn" class="toolbar-btn" title="Open new tab">+ Tab</button>
+        <button id="newChatBtn" class="toolbar-btn danger" title="Clear this conversation">Clear</button>
       </div>
     </div>
   </div>

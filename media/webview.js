@@ -146,21 +146,24 @@
     vscode.postMessage({ type: "pickFile" });
   });
 
-  // Token usage
-  tokenUsageBtn.addEventListener("click", function () {
-    var existing = document.querySelector(".token-usage");
-    if (existing) { existing.remove(); return; }
-    var div = document.createElement("div");
-    div.className = "token-usage";
-    div.innerHTML =
-      "<h4>Token Usage</h4>" +
-      "<div>Tokens used: <strong>" + totalTokensUsed.toLocaleString() + "</strong></div>" +
-      "<div>Messages: <strong>" + sessionMessages + "</strong></div>" +
-      '<div style="margin-top:8px;font-size:11px">' +
-      '<a href="https://platform.xiaomimimo.com/#/console/plan-manage" ' +
-      'style="color:var(--vscode-textLink-foreground)">View quota on MiMo Platform</a></div>';
-    messagesEl.insertBefore(div, messagesEl.firstChild);
-  });
+  // Token usage — toggle panel at the bottom of messages
+  if (tokenUsageBtn) {
+    tokenUsageBtn.addEventListener("click", function () {
+      var existing = document.querySelector(".token-usage");
+      if (existing) { existing.remove(); return; }
+      var div = document.createElement("div");
+      div.className = "message token-usage";
+      div.innerHTML =
+        "<h4>Token Usage</h4>" +
+        "<div>Tokens used: <strong>" + totalTokensUsed.toLocaleString() + "</strong></div>" +
+        "<div>Messages: <strong>" + sessionMessages + "</strong></div>" +
+        '<div style="margin-top:8px;font-size:11px">' +
+        '<a href="https://platform.xiaomimimo.com/#/console/plan-manage" ' +
+        'style="color:var(--vscode-textLink-foreground)">View quota on MiMo Platform</a></div>';
+      messagesEl.appendChild(div);
+      scrollToBottom();
+    });
+  }
 
   // Stop
   stopBtn.addEventListener("click", function () {
@@ -174,7 +177,19 @@
   var welcomeEl = document.getElementById("welcome");
   if (welcomeEl) welcomeTemplate = welcomeEl.innerHTML;
 
+  // New tab button
+  var newTabBtn = document.getElementById("newTabBtn");
+  if (newTabBtn) {
+    newTabBtn.addEventListener("click", function () {
+      vscode.postMessage({ type: "openNewTab" });
+    });
+  }
+
+  // Clear chat — with confirmation
   newChatBtn.addEventListener("click", function () {
+    if (sessionMessages > 0 && !confirm("Clear this conversation? All history will be lost.")) {
+      return;
+    }
     messagesEl.innerHTML = "";
     vscode.postMessage({ type: "clearHistory" });
     var w = document.createElement("div");

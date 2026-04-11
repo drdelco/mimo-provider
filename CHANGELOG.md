@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1 (2026-04-11)
+
+- **Usage button fix**: token usage panel now appears at the bottom of chat (was inserted at top, invisible)
+- **Clear with confirmation**: "Clear" button asks for confirmation before erasing conversation history
+- **New Tab button**: `+ Tab` button in toolbar opens a new independent chat tab without clearing current
+- **Tab numbering**: persistent counter via `globalState` — tabs increment correctly across extension reloads
+
 ## 0.6.0 (2026-04-11)
 
 ### Real-time progress feedback
