@@ -949,25 +949,61 @@ function stripTags(html: string): string {
     .replace(/&nbsp;/g, ' ');
 }
 
-/** Convert HTML to readable plain text */
+/** Convert HTML to readable plain text — aggressive noise removal */
 function htmlToText(html: string): string {
-  // Remove script, style, nav, header, footer
-  let text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
-    .replace(/<header[\s\S]*?<\/header>/gi, '')
-    .replace(/<footer[\s\S]*?<\/footer>/gi, '');
+  let text = html;
 
-  // Convert block elements to newlines
-  text = text.replace(/<\/?(p|div|br|h[1-6]|li|tr|blockquote|section|article)[^>]*>/gi, '\n');
+  // Remove non-content blocks entirely
+  const removeBlocks = [
+    /<script[\s\S]*?<\/script>/gi,
+    /<style[\s\S]*?<\/style>/gi,
+    /<nav[\s\S]*?<\/nav>/gi,
+    /<header[\s\S]*?<\/header>/gi,
+    /<footer[\s\S]*?<\/footer>/gi,
+    /<aside[\s\S]*?<\/aside>/gi,
+    /<form[\s\S]*?<\/form>/gi,
+    /<iframe[\s\S]*?<\/iframe>/gi,
+    /<noscript[\s\S]*?<\/noscript>/gi,
+    /<svg[\s\S]*?<\/svg>/gi,
+    /<button[\s\S]*?<\/button>/gi,
+    /<select[\s\S]*?<\/select>/gi,
+    /<input[^>]*>/gi,
+    /<label[\s\S]*?<\/label>/gi,
+    /<!--[\s\S]*?-->/g,
+  ];
+  for (const rx of removeBlocks) { text = text.replace(rx, ''); }
 
-  // Strip remaining tags
+  // Remove elements by common noise class/id patterns (menus, sidebars, cookies, ads)
+  text = text.replace(/<[^>]+(class|id)="[^"]*(?:menu|sidebar|cookie|consent|popup|modal|banner|advert|social|share|related|comment|breadcrumb|pagination|newsletter|subscribe|signup|login|search-form|filter)[^"]*"[^>]*>[\s\S]*?<\/[^>]+>/gi, '');
+
+  // Convert headings to markdown-style for readability
+  text = text.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
+  text = text.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n');
+  text = text.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n');
+  text = text.replace(/<h[4-6][^>]*>([\s\S]*?)<\/h[4-6]>/gi, '\n#### $1\n');
+
+  // Convert list items
+  text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1');
+
+  // Convert links to [text](url) — preserve useful URLs
+  text = text.replace(/<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, url, label) => {
+    const cleanLabel = label.replace(/<[^>]+>/g, '').trim();
+    return cleanLabel ? `[${cleanLabel}](${url})` : '';
+  });
+
+  // Block elements → newlines
+  text = text.replace(/<\/?(p|div|br|tr|blockquote|section|article|main|figcaption|details|summary)[^>]*>/gi, '\n');
+
+  // Strip all remaining tags
   text = stripTags(text);
 
-  // Collapse whitespace
-  text = text.replace(/[ \t]+/g, ' ');
-  text = text.replace(/\n{3,}/g, '\n\n');
+  // Clean up whitespace
+  text = text.replace(/[ \t]+/g, ' ');           // collapse horizontal space
+  text = text.replace(/ *\n */g, '\n');           // trim lines
+  text = text.replace(/\n{3,}/g, '\n\n');         // max 2 consecutive newlines
+  text = text.split('\n')                         // remove very short noise lines
+    .filter(line => line.trim().length > 2 || line.trim() === '')
+    .join('\n');
   text = text.trim();
 
   return text;

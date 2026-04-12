@@ -141,7 +141,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         const requestBody: Record<string, any> = {
           model: modelId,
           messages,
-          tools: useXiaomiSearch ? [...TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS],
+          tools: useXiaomiSearch ? [...TOOLS, ...LOCAL_WEB_TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS],
           stream: false,
           max_completion_tokens: Math.min(modelSpec.maxOutputTokens, 32768),
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5,
@@ -169,19 +169,17 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           });
         }
 
-        // Web search fallback: if Xiaomi plugin fails, retry with DuckDuckGo tools
+        // Web search fallback: if Xiaomi plugin fails for ANY reason, retry with DuckDuckGo
         if (!response.ok && useXiaomiSearch) {
-          const errorText = await response.text();
-          if (errorText.includes('web_search') || errorText.includes('webSearch') || errorText.includes('plugin')) {
-            this.postMessage({ type: 'stream', text: '*Xiaomi web search unavailable — switching to DuckDuckGo...*\n' });
-            requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
-            response = await fetch(`${baseUrl}/chat/completions`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-              body: JSON.stringify(requestBody),
-              signal: AbortSignal.timeout(300000)
-            });
-          }
+          const errDetail = await response.text().catch(() => '');
+          this.postMessage({ type: 'stream', text: `*Xiaomi $web_search failed (${response.status}: ${errDetail.substring(0, 100)}) — switching to DuckDuckGo...*\n` });
+          requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
+          response = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(300000)
+          });
         }
 
         if (!response.ok) {

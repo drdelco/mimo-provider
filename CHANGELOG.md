@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.1 (2026-04-12)
+
+### Improved HTML parser
+
+- **Aggressive noise removal**: strips `<nav>`, `<aside>`, `<form>`, `<button>`, `<select>`, `<svg>`, `<iframe>`, `<noscript>`, cookie/consent banners, sidebars, menus, ad blocks, social share widgets, and other non-content elements.
+- **Markdown conversion**: headings become `#`/`##`/`###`, list items become `- `, links become `[text](url)` — much cleaner output for the model.
+- **Short line filtering**: removes single-character noise lines (empty nav items, stray icons).
+- Fetched pages now consume significantly fewer tokens and contain more useful content.
+
+### Date awareness
+
+- System prompt now includes today's date at the top: "Today is sábado, 12 de abril de 2026". MiMo no longer defaults to its training date.
+
+### Web search status
+
+- `web_search` and `fetch_url` function tools are now always available regardless of `mimo.webSearch` setting.
+- **Pending**: Xiaomi `$web_search` builtin_function plugin — format confirmed (`type: "builtin_function"`, `name: "$web_search"`), API accepts it without error, but MiMo V2 Pro does not invoke it. Awaiting Xiaomi team response on [issue #20](https://github.com/XiaomiMiMo/MiMo-V2-Flash/issues/20).
+- DuckDuckGo search works but is subject to rate limiting under heavy use.
+
 ## 0.8.0 (2026-04-12)
 
 ### Xiaomi $web_search plugin — correct implementation
