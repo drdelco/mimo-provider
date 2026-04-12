@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0 (2026-04-12)
+
+### Xiaomi $web_search plugin — correct implementation
+
+- **Fixed tool format**: `type: "builtin_function"` with `function.name: "$web_search"` (was incorrectly using `type: "web_search"`).
+- **XML response handling**: MiMo returns search requests as XML in `message.content` (not in `tool_calls`). The extension now parses the XML, executes DuckDuckGo search, and injects results back for MiMo to synthesize.
+- **Seamless flow**: user asks → MiMo decides to search → returns XML with query/country/freshness → extension searches DuckDuckGo → results sent back → MiMo answers with sources.
+- Removed incorrect `webSearchEnabled` parameter.
+- DuckDuckGo fallback still available when `mimo.webSearch` is disabled.
+
 ## 0.7.7 (2026-04-12)
 
 ### Web search fixes

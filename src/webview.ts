@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall } from './tools';
+import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall, containsWebSearchXml, executeWebSearchFromXml } from './tools';
 import { buildSystemPrompt, invalidatePromptCache } from './prompt';
 import { ChatMessage, compressHistory, serializeHistory, deserializeHistory } from './context';
 import { pickModel, getModel, getApiConfig } from './provider';
@@ -147,7 +147,6 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5,
           thinking: { type: useThinking ? 'enabled' : 'disabled' }
         };
-        if (useXiaomiSearch) { requestBody.webSearchEnabled = true; }
 
         let response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
@@ -176,7 +175,6 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           if (errorText.includes('web_search') || errorText.includes('webSearch') || errorText.includes('plugin')) {
             this.postMessage({ type: 'stream', text: '*Xiaomi web search unavailable — switching to DuckDuckGo...*\n' });
             requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
-            delete requestBody.webSearchEnabled;
             response = await fetch(`${baseUrl}/chat/completions`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
@@ -201,6 +199,20 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         const message = choice.message;
+
+        // ---- $web_search XML handling ----
+        // MiMo returns search requests as XML in content (not in tool_calls)
+        if (message.content && choice.finish_reason === 'tool_calls' && containsWebSearchXml(message.content)) {
+          this.postMessage({ type: 'toolCall', name: 'web_search', args: 'Searching the web...' });
+          const searchResult = await executeWebSearchFromXml(message.content);
+          if (searchResult) {
+            this.postMessage({ type: 'toolResult', name: 'web_search', result: searchResult.results.length > 2000 ? searchResult.results.substring(0, 2000) + '\n...' : searchResult.results });
+            // Send results back to MiMo for synthesis
+            this.conversationHistory.push({ role: 'assistant', content: message.content });
+            this.conversationHistory.push({ role: 'user', content: `[Web search results for: ${searchResult.query}]\n\n${searchResult.results}` });
+            continue; // Next iteration — MiMo will synthesize the answer
+          }
+        }
 
         // ---- Visible feedback: AFTER API call ----
         // Show any intermediate text content from MiMo (progress updates)

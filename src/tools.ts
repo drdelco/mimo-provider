@@ -173,12 +173,10 @@ export const TOOLS: ToolDefinition[] = [
   }
 ];
 
-/** Xiaomi native web search plugin — sent as a special tool type (server-side) */
+/** Xiaomi native web search plugin — builtin_function format (like Kimi/Moonshot) */
 export const WEB_SEARCH_TOOL = {
-  type: 'web_search' as const,
-  force_search: false,
-  max_keyword: 3,
-  limit: 5
+  type: 'builtin_function' as const,
+  function: { name: '$web_search' }
 };
 
 /** Local web search tools — used as fallback when Xiaomi plugin is not enabled */
@@ -768,6 +766,89 @@ export async function executeTool(toolCall: ToolCall): Promise<string> {
     }
   } catch (error: any) {
     return `Tool error (${toolCall.function.name}): ${error.message}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Xiaomi $web_search XML handling
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if MiMo's response content contains a $web_search XML call.
+ * MiMo returns search requests as XML in message.content (NOT in tool_calls).
+ */
+export function containsWebSearchXml(content: string): boolean {
+  return content.includes('$web_search') && content.includes('<');
+}
+
+/**
+ * Parse MiMo's $web_search XML and extract search parameters.
+ * MiMo returns XML like: <$web_search> <query>search terms</query> <country>ES</country> <freshness>day</freshness> </$web_search>
+ */
+function parseWebSearchXml(content: string): { query: string; country?: string; freshness?: string } | null {
+  // Extract content between web_search tags (handles $web_search or web_search)
+  const blockMatch = content.match(/<\$?web_search[^>]*>([\s\S]*?)<\/\$?web_search>/i);
+  if (!blockMatch) return null;
+
+  const block = blockMatch[1];
+  const queryMatch = block.match(/<query>([\s\S]*?)<\/query>/i);
+  if (!queryMatch) return null;
+
+  const countryMatch = block.match(/<country>([\s\S]*?)<\/country>/i);
+  const freshnessMatch = block.match(/<freshness>([\s\S]*?)<\/freshness>/i);
+
+  return {
+    query: queryMatch[1].trim(),
+    country: countryMatch?.[1]?.trim(),
+    freshness: freshnessMatch?.[1]?.trim()
+  };
+}
+
+/**
+ * Handle MiMo's $web_search XML: parse it, execute DuckDuckGo search, return formatted results.
+ */
+export async function executeWebSearchFromXml(content: string): Promise<{ query: string; results: string } | null> {
+  const params = parseWebSearchXml(content);
+  if (!params) return null;
+
+  // Execute DuckDuckGo search using our existing infrastructure
+  try {
+    const searchParams = new URLSearchParams({ q: params.query, kl: params.country || '' });
+    const resp = await fetch('https://lite.duckduckgo.com/lite/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      body: searchParams.toString(),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    let results: SearchResult[] = [];
+    if (resp.ok) {
+      const html = await resp.text();
+      results = parseDuckDuckGoLite(html, 8);
+    }
+
+    // Fallback to DDG HTML
+    if (results.length === 0) {
+      const resp2 = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(params.query)}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        signal: AbortSignal.timeout(15000)
+      });
+      if (resp2.ok) {
+        const html2 = await resp2.text();
+        results = parseDuckDuckGoHtml(html2, 8);
+      }
+    }
+
+    const formatted = results.length > 0
+      ? results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n\n')
+      : `No results found for: ${params.query}`;
+
+    return { query: params.query, results: formatted };
+  } catch (err: any) {
+    return { query: params.query, results: `Search failed: ${err.message}` };
   }
 }
 

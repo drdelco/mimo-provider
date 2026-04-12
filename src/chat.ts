@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall } from './tools';
+import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall, containsWebSearchXml, executeWebSearchFromXml } from './tools';
 import { buildSystemPrompt, invalidatePromptCache } from './prompt';
 import { ChatMessage, compressHistory } from './context';
 import { pickModel, getModel, getApiConfig } from './provider';
@@ -112,7 +112,6 @@ Continúa después del resumen.`
           max_completion_tokens: Math.min(modelSpec.maxOutputTokens, 32768),
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5
         };
-        if (useXiaomiSearch) { requestBody.webSearchEnabled = true; }
 
         requestBody.thinking = { type: useThinking ? 'enabled' : 'disabled' };
 
@@ -149,7 +148,6 @@ Continúa después del resumen.`
           if (errorText.includes('web_search') || errorText.includes('webSearch') || errorText.includes('plugin')) {
             stream.markdown('*Xiaomi web search unavailable — switching to DuckDuckGo...*\n\n');
             requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
-            delete requestBody.webSearchEnabled;
             response = await fetch(`${baseUrl}/chat/completions`, {
               method: 'POST',
               headers: {
@@ -176,6 +174,17 @@ Continúa después del resumen.`
         }
 
         const message = choice.message;
+
+        // $web_search XML handling — MiMo returns search as XML in content
+        if (message.content && choice.finish_reason === 'tool_calls' && containsWebSearchXml(message.content)) {
+          stream.markdown('*Searching the web...*\n\n');
+          const searchResult = await executeWebSearchFromXml(message.content);
+          if (searchResult) {
+            this.conversationHistory.push({ role: 'assistant', content: message.content });
+            this.conversationHistory.push({ role: 'user', content: `[Web search results for: ${searchResult.query}]\n\n${searchResult.results}` });
+            continue;
+          }
+        }
 
         // If MiMo wants to call tools
         if (choice.finish_reason === 'tool_calls' && message.tool_calls) {
