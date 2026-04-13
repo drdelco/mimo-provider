@@ -60,7 +60,8 @@
       "WebFetch(domain:developers.openai.com)",
       "Bash(gh search:*)",
       "Bash(gh issue create --repo XiaomiMiMo/MiMo-V2-Flash --title 'Web Search plugin — API request format not documented' --body ':*)",
-      "Bash(gh issue comment 20 --repo XiaomiMiMo/MiMo-V2-Flash --body ':*)"
+      "Bash(gh issue comment 20 --repo XiaomiMiMo/MiMo-V2-Flash --body ':*)",
+      "Bash(gh issue:*)"
     ]
   }
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.3 (2026-04-13)
+
+### Process feedback improvements
+
+- **Descriptive step indicators**: "Step 1 — Analyzing your request..." / "Step 3 — Continuing after reading file..." instead of generic "calling MiMo...".
+- **Progress summaries every 5 steps**: shows files read, files modified, searches and commands run — visible to the user without interrupting MiMo.
+- **Final response indicator**: "Done — N steps completed. Writing response..." shown while MiMo generates the final answer, eliminating the silent wait.
+- Tool activity tracking (files read, files modified, searches, commands) throughout the session.
+
 ## 0.8.1 (2026-04-12)
 
 ### Improved HTML parser

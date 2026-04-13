@@ -2,7 +2,7 @@
   "name": "mimo-provider",
   "displayName": "MiMo by Xiaomi",
   "description": "Use Xiaomi MiMo V2 models as a full coding agent in Antigravity and VS Code — chat panel, tool calling, file editing, terminal execution, and smart context management.",
-  "version": "0.8.1",
+  "version": "0.8.3",
   "publisher": "drdelco",
   "icon": "icon.png",
   "repository": {

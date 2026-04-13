@@ -103,12 +103,18 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       let iteration = 0;
       let needsMoreToolCalls = true;
       let lastToolName: string | undefined;
+      const toolsUsed: string[] = [];       // Track tool history for summaries
+      const filesRead = new Set<string>();
+      const filesModified = new Set<string>();
 
       while (needsMoreToolCalls && iteration < maxIterations) {
         iteration++;
 
         // ---- Visible feedback: BEFORE API call ----
-        this.postMessage({ type: 'step', text: `Step ${iteration} — calling MiMo...` });
+        const stepLabel = iteration === 1 ? 'Analyzing your request...'
+          : lastToolName ? `Continuing after ${this.friendlyToolName(lastToolName)}...`
+          : 'Processing...';
+        this.postMessage({ type: 'step', text: `Step ${iteration} — ${stepLabel}` });
 
         // Inject pending user messages
         while (this.pendingMessages.length > 0) {
@@ -229,6 +235,12 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
             this.postMessage({ type: 'toolCall', name: tc.function.name, args: this.formatToolCall(tc.function.name, args) });
 
             lastToolName = tc.function.name;
+            toolsUsed.push(tc.function.name);
+
+            // Track files for progress summaries
+            if (tc.function.name === 'read_file') filesRead.add(args.path);
+            if (tc.function.name === 'write_file' || tc.function.name === 'edit_file') filesModified.add(args.path);
+
             const result = await executeTool(tc);
 
             // Show abbreviated result AFTER executing
@@ -237,7 +249,21 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
             const historyResult = result.length > 4000 ? result.substring(0, 4000) + '\n... (truncated)' : result;
             this.conversationHistory.push({ role: 'tool', content: historyResult, tool_call_id: tc.id });
           }
+
+          // Periodic progress summary every 5 iterations (visible to user, not sent to model)
+          if (iteration > 1 && iteration % 5 === 0) {
+            const summary = this.buildProgressSummary(iteration, toolsUsed, filesRead, filesModified);
+            this.postMessage({ type: 'stream', text: summary });
+          }
         } else {
+          // ---- Final response indicator ----
+          // Show "writing response" while MiMo's final text loads
+          if (iteration > 1) {
+            const finalSummary = this.buildProgressSummary(iteration - 1, toolsUsed, filesRead, filesModified);
+            this.postMessage({ type: 'step', text: `Done — ${iteration - 1} steps completed. Writing response...` });
+            this.postMessage({ type: 'stream', text: finalSummary });
+          }
+
           needsMoreToolCalls = false;
           if (message.content) {
             this.postMessage({ type: 'assistantMessage', text: message.content });
@@ -271,6 +297,34 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       case 'get_diagnostics': return `diagnostics ${args.path || '(all)'}`;
       case 'read_image': return `image ${args.path}`;
       default: return `${name}(${JSON.stringify(args).substring(0, 100)})`;
+    }
+  }
+
+  private buildProgressSummary(iteration: number, toolsUsed: string[], filesRead: Set<string>, filesModified: Set<string>): string {
+    const parts: string[] = [`*Progress: ${iteration} steps completed.*`];
+    if (filesRead.size > 0) parts.push(`Files read: ${[...filesRead].slice(-5).join(', ')}`);
+    if (filesModified.size > 0) parts.push(`Files modified: ${[...filesModified].join(', ')}`);
+    const searches = toolsUsed.filter(t => t === 'web_search' || t === 'search_files').length;
+    const commands = toolsUsed.filter(t => t === 'run_terminal').length;
+    if (searches > 0) parts.push(`Searches: ${searches}`);
+    if (commands > 0) parts.push(`Commands run: ${commands}`);
+    return parts.join(' | ') + '\n';
+  }
+
+  private friendlyToolName(name: string): string {
+    switch (name) {
+      case 'read_file': return 'reading file';
+      case 'write_file': return 'writing file';
+      case 'edit_file': return 'editing file';
+      case 'run_terminal': return 'running command';
+      case 'search_files': return 'searching code';
+      case 'list_files': return 'listing files';
+      case 'find_files': return 'finding files';
+      case 'get_diagnostics': return 'checking diagnostics';
+      case 'read_image': return 'analyzing image';
+      case 'web_search': return 'web search';
+      case 'fetch_url': return 'fetching page';
+      default: return name;
     }
   }
 
