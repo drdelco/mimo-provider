@@ -87,6 +87,30 @@ code {
   font-size: 12px;
 }
 
+.code-block {
+  position: relative;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-button-background);
+  color: var(--vscode-button-background);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.code-block:hover .copy-btn { opacity: 1; }
+.copy-btn:hover {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
 /* ---- Welcome ---- */
 .welcome {
   display: flex;

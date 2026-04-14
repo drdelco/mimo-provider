@@ -380,6 +380,9 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       case 'insertCode':
         await this.insertCodeToEditor(message.code);
         break;
+      case 'copyCode':
+        await vscode.env.clipboard.writeText(message.code);
+        break;
       case 'pickFile': {
         const fileUris = await vscode.window.showOpenDialog({
           canSelectMany: true, openLabel: 'Add as context',

@@ -44,7 +44,7 @@
 
   function renderMarkdown(text) {
     return text
-      .replace(/```(\w*)\n([\s\S]*?)\n```/g, "<pre><code>$2</code></pre>")
+      .replace(/```(\w*)\n([\s\S]*?)\n```/g, '<div class="code-block"><button class="copy-btn" title="Copy code">Copy</button><pre><code>$2</code></pre></div>')
       .replace(/`([^`]+)`/g, "<code>$1</code>")
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/\n/g, "<br>");
@@ -98,6 +98,25 @@
 
   // Bind initial quick actions
   bindQuickActions(document);
+
+  // ---- Copy code button (delegated) ----
+  messagesEl.addEventListener("click", function (e) {
+    var btn = e.target;
+    if (!btn.classList || !btn.classList.contains("copy-btn")) return;
+    var codeEl = btn.parentElement && btn.parentElement.querySelector("pre code");
+    if (!codeEl) return;
+    var text = codeEl.textContent || "";
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = "Copied!";
+        setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+      });
+    } else {
+      vscode.postMessage({ type: "copyCode", code: text });
+      btn.textContent = "Copied!";
+      setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+    }
+  });
 
   // ---- Attached files ----
 

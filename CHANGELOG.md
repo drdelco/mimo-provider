@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.4 (2026-04-14)
+
+### Search reliability
+
+- **DuckDuckGo rate limiting protection**: 1.2s delay between consecutive DDG requests prevents rate limiting.
+- **Auto-retry with shorter query**: when search returns 0 results, automatically retries with a shortened query (removing stop words). Shows both attempted queries.
+- Stop word list covers English and Spanish.
+
+### Copy code button
+
+- **Copy button on code blocks**: appears on hover, copies code to clipboard. Uses `navigator.clipboard` with VS Code API fallback.
+- Code blocks now wrapped in `.code-block` container for consistent styling.
+
 ## 0.8.3 (2026-04-13)
 
 ### Process feedback improvements

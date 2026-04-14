@@ -29,6 +29,24 @@ const SKIP_DIRS = new Set([
   '__pycache__', '.venv', 'venv', 'coverage', '.turbo', '.cache'
 ]);
 
+// DuckDuckGo rate limiting — 1.2s between requests
+let lastDdgTimestamp = 0;
+async function ddgDelay(): Promise<void> {
+  const elapsed = Date.now() - lastDdgTimestamp;
+  if (elapsed < 1200) { await new Promise(r => setTimeout(r, 1200 - elapsed)); }
+  lastDdgTimestamp = Date.now();
+}
+
+// Stop words for query shortening
+const STOP_WORDS = new Set(['how', 'to', 'the', 'a', 'an', 'in', 'for', 'with', 'what', 'is', 'are', 'of', 'on', 'and', 'or', 'de', 'en', 'la', 'el', 'los', 'las', 'un', 'una', 'del', 'al', 'por', 'con', 'que', 'como', 'para', 'sobre']);
+function shortenQuery(query: string): string | null {
+  const words = query.replace(/["']/g, '').split(/\s+/).filter(w => w.length > 0);
+  if (words.length <= 2) return null;
+  const meaningful = words.filter(w => !STOP_WORDS.has(w.toLowerCase()));
+  const shortened = (meaningful.length >= 2 ? meaningful.slice(0, 3) : words.slice(0, 3)).join(' ');
+  return shortened !== query ? shortened : null;
+}
+
 export const TOOLS: ToolDefinition[] = [
   {
     type: 'function',
@@ -673,52 +691,59 @@ export async function executeTool(toolCall: ToolCall): Promise<string> {
         }
       }
 
-      // ===== WEB SEARCH (DuckDuckGo fallback) =====
+      // ===== WEB SEARCH (DuckDuckGo with delay + retry) =====
       case 'web_search': {
         const query = args.query;
         const maxResults = Math.min(args.max_results || 8, 15);
         if (!query) return 'Error: query is required';
 
-        try {
-          // DuckDuckGo Lite — lightweight HTML, no JS required
-          const params = new URLSearchParams({ q: query, kl: '' });
-          const resp = await fetch('https://lite.duckduckgo.com/lite/', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            body: params.toString(),
-            signal: AbortSignal.timeout(15000)
-          });
+        const formatResults = (results: SearchResult[]) =>
+          results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n\n');
 
-          if (!resp.ok) return `Search failed: HTTP ${resp.status}`;
-
-          const html = await resp.text();
-          const results = parseDuckDuckGoLite(html, maxResults);
-
-          if (results.length === 0) return `No results found for: ${query}`;
-
-          return results.map((r, i) =>
-            `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`
-          ).join('\n\n');
-        } catch (err: any) {
-          // Fallback: try DuckDuckGo HTML
+        async function ddgSearch(q: string, max: number): Promise<SearchResult[]> {
+          await ddgDelay();
           try {
-            const resp = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+            const params = new URLSearchParams({ q, kl: '' });
+            const resp = await fetch('https://lite.duckduckgo.com/lite/', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              },
+              body: params.toString(),
+              signal: AbortSignal.timeout(15000)
+            });
+            if (resp.ok) {
+              const results = parseDuckDuckGoLite(await resp.text(), max);
+              if (results.length > 0) return results;
+            }
+          } catch { /* fall through to HTML variant */ }
+
+          await ddgDelay();
+          try {
+            const resp = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
               headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
               signal: AbortSignal.timeout(15000)
             });
-            if (!resp.ok) return `Search failed: ${err.message}`;
-            const html = await resp.text();
-            const results = parseDuckDuckGoHtml(html, maxResults);
-            if (results.length === 0) return `No results found for: ${query}`;
-            return results.map((r, i) =>
-              `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`
-            ).join('\n\n');
-          } catch (err2: any) {
-            return `Web search failed: ${err.message}. Fallback also failed: ${err2.message}`;
+            if (resp.ok) return parseDuckDuckGoHtml(await resp.text(), max);
+          } catch { /* no results */ }
+          return [];
+        }
+
+        try {
+          let results = await ddgSearch(query, maxResults);
+          if (results.length > 0) return formatResults(results);
+
+          // Auto-retry with shorter query
+          const shorter = shortenQuery(query);
+          if (shorter) {
+            results = await ddgSearch(shorter, maxResults);
+            if (results.length > 0) return `(Retried with: "${shorter}")\n\n` + formatResults(results);
           }
+
+          return `No results found for: ${query}${shorter ? ` (also tried: "${shorter}")` : ''}`;
+        } catch (err: any) {
+          return `Web search failed: ${err.message}`;
         }
       }
 
