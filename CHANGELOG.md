@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.5 (2026-04-14)
+
+### Smart content extraction
+
+- **Readability-like extraction**: `fetch_url` now tries to isolate `<article>`, `<main>`, `role="main"`, or common content classes (`article-body`, `post-content`, `entry-content`, etc.) before processing. Falls back to full page if no main block found.
+- Dramatically reduces noise from navigation, sidebars, and footers — cleaner output, fewer wasted tokens.
+
+### Syntax highlighting
+
+- **Lightweight code coloring** in chat code blocks — keywords (blue), strings (orange), comments (green/italic), numbers (green), types (teal).
+- Zero external dependencies — regex-based highlighter covers JS/TS, Python, Rust, Go, and most C-family languages.
+- Uses VS Code theme variables for colors, adapting to light/dark themes.
+- Language class preserved on `<code>` elements (`lang-typescript`, `lang-python`, etc.).
+
 ## 0.8.4 (2026-04-14)
 
 ### Search reliability

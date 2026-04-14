@@ -774,8 +774,8 @@ export async function executeTool(toolCall: ToolCall): Promise<string> {
             return text.substring(0, maxChars);
           }
 
-          // Strip HTML to plain text
-          const clean = htmlToText(text);
+          // Extract main content, then convert to text
+          const clean = extractContent(text);
           if (clean.length === 0) return 'Page returned no readable text content.';
           if (clean.length > maxChars) {
             return clean.substring(0, maxChars) + '\n\n... (truncated)';
@@ -965,6 +965,34 @@ function parseDuckDuckGoHtml(html: string, max: number): SearchResult[] {
   }
 
   return results;
+}
+
+/**
+ * Readability-like content extraction: find the main content block
+ * before running htmlToText. Tries <article>, <main>, role="main",
+ * common content classes, then falls back to full page.
+ */
+function extractContent(html: string): string {
+  // Try to isolate the main content block
+  const candidates = [
+    /<article[^>]*>([\s\S]*?)<\/article>/i,
+    /<main[^>]*>([\s\S]*?)<\/main>/i,
+    /<div[^>]+role="main"[^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]+class="[^"]*(?:article-body|post-content|entry-content|story-body|page-content|content-body|single-content)[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]+id="[^"]*(?:article|content|main|post)[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+  ];
+
+  for (const rx of candidates) {
+    const match = html.match(rx);
+    if (match && match[1]) {
+      const extracted = htmlToText(match[1]);
+      // Only use if meaningful content (more than just nav remnants)
+      if (extracted.length > 200) return extracted;
+    }
+  }
+
+  // Fallback: process full page
+  return htmlToText(html);
 }
 
 /** Strip HTML tags from a string */

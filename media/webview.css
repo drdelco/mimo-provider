@@ -111,6 +111,13 @@ code {
   color: var(--vscode-button-foreground);
 }
 
+/* ---- Syntax highlighting ---- */
+.hl-keyword { color: var(--vscode-symbolIcon-keywordForeground, #569cd6); }
+.hl-string { color: var(--vscode-symbolIcon-stringForeground, #ce9178); }
+.hl-comment { color: var(--vscode-symbolIcon-commentForeground, #6a9955); font-style: italic; }
+.hl-number { color: var(--vscode-symbolIcon-numberForeground, #b5cea8); }
+.hl-type { color: var(--vscode-symbolIcon-classForeground, #4ec9b0); }
+
 /* ---- Welcome ---- */
 .welcome {
   display: flex;

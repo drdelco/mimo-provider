@@ -42,9 +42,44 @@
     return div.innerHTML;
   }
 
+  // ---- Lightweight syntax highlighting ----
+  var HL_KEYWORDS = /\b(function|const|let|var|return|if|else|for|while|do|switch|case|break|continue|class|extends|import|export|from|default|new|this|typeof|instanceof|try|catch|finally|throw|async|await|yield|of|in|true|false|null|undefined|void|delete|super|static|get|set|def|self|elif|except|raise|with|as|lambda|pass|print|None|True|False|type|interface|enum|struct|impl|fn|pub|mod|use|match|loop|mut|ref|move|crate|where|trait)\b/g;
+  var HL_STRINGS = /(["'`])(?:(?!\1|\\).|\\.)*?\1/g;
+  var HL_COMMENTS_LINE = /(\/\/.*|#(?![\w{]).*)/g;
+  var HL_COMMENTS_BLOCK = /\/\*[\s\S]*?\*\//g;
+  var HL_NUMBERS = /\b(\d+\.?\d*(?:e[+-]?\d+)?|0x[0-9a-f]+)\b/gi;
+  var HL_TYPES = /\b([A-Z][a-zA-Z0-9_]*)\b/g;
+
+  function highlightCode(code) {
+    // Order matters: protect strings/comments first, then highlight the rest
+    var placeholders = [];
+    function protect(match) {
+      placeholders.push(match);
+      return "\x00PH" + (placeholders.length - 1) + "\x00";
+    }
+
+    // Protect strings and comments from keyword highlighting
+    var s = code;
+    s = s.replace(HL_COMMENTS_BLOCK, function(m) { return protect('<span class="hl-comment">' + m + '</span>'); });
+    s = s.replace(HL_COMMENTS_LINE, function(m) { return protect('<span class="hl-comment">' + m + '</span>'); });
+    s = s.replace(HL_STRINGS, function(m) { return protect('<span class="hl-string">' + m + '</span>'); });
+
+    // Highlight keywords, numbers, types
+    s = s.replace(HL_KEYWORDS, '<span class="hl-keyword">$1</span>');
+    s = s.replace(HL_NUMBERS, '<span class="hl-number">$1</span>');
+    s = s.replace(HL_TYPES, '<span class="hl-type">$1</span>');
+
+    // Restore protected segments
+    s = s.replace(/\x00PH(\d+)\x00/g, function(_, i) { return placeholders[parseInt(i)]; });
+    return s;
+  }
+
   function renderMarkdown(text) {
     return text
-      .replace(/```(\w*)\n([\s\S]*?)\n```/g, '<div class="code-block"><button class="copy-btn" title="Copy code">Copy</button><pre><code>$2</code></pre></div>')
+      .replace(/```(\w*)\n([\s\S]*?)\n```/g, function(_, lang, code) {
+        var highlighted = highlightCode(escapeHtml(code));
+        return '<div class="code-block"><button class="copy-btn" title="Copy code">Copy</button><pre><code class="lang-' + (lang || 'text') + '">' + highlighted + '</code></pre></div>';
+      })
       .replace(/`([^`]+)`/g, "<code>$1</code>")
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/\n/g, "<br>");
