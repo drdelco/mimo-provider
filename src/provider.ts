@@ -108,6 +108,10 @@ export function getApiConfig(): ApiConfig {
 export function pickModel(hasImages: boolean, lastToolName?: string): string {
   if (hasImages) return 'mimo-v2-omni';
 
+  // User-selected model override (from UI selector)
+  const preferred = vscode.workspace.getConfiguration('mimo').get<string>('preferredModel');
+  if (preferred && preferred !== 'auto') return preferred;
+
   const { flashAvailable } = getApiConfig();
 
   if (flashAvailable && lastToolName) {

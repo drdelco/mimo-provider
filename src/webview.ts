@@ -148,7 +148,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           model: modelId,
           messages,
           tools: useXiaomiSearch ? [...TOOLS, ...LOCAL_WEB_TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS],
-          stream: false,
+          stream: true,
           max_completion_tokens: Math.min(modelSpec.maxOutputTokens, 32768),
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5,
           thinking: { type: useThinking ? 'enabled' : 'disabled' }
@@ -161,7 +161,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           signal: AbortSignal.timeout(300000)
         });
 
-        // Flash fallback to Pro
+        // Flash fallback to Pro (non-streaming for fallback simplicity)
         if (!response.ok && modelId === 'mimo-v2-flash') {
           const fb = getModel('mimo-v2-pro');
           requestBody.model = 'mimo-v2-pro';
@@ -175,7 +175,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           });
         }
 
-        // Web search fallback: if Xiaomi plugin fails for ANY reason, retry with DuckDuckGo
+        // Web search fallback
         if (!response.ok && useXiaomiSearch) {
           const errDetail = await response.text().catch(() => '');
           this.postMessage({ type: 'stream', text: `*Xiaomi $web_search failed (${response.status}: ${errDetail.substring(0, 100)}) — switching to DuckDuckGo...*\n` });
@@ -194,80 +194,66 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           return;
         }
 
-        const data = await response.json() as any;
-        const choice = data.choices?.[0];
-        if (!choice) { this.postMessage({ type: 'error', text: 'No valid response.' }); return; }
+        // ---- Parse SSE stream ----
+        const parsed = await this.parseSSEResponse(response);
 
-        if (data.usage) {
-          this.postMessage({ type: 'tokenUsage', prompt: data.usage.prompt_tokens || 0, completion: data.usage.completion_tokens || 0, total: data.usage.total_tokens || 0 });
+        if (parsed.usage) {
+          this.postMessage({ type: 'tokenUsage', prompt: parsed.usage.prompt_tokens || 0, completion: parsed.usage.completion_tokens || 0, total: parsed.usage.total_tokens || 0 });
         }
 
-        const message = choice.message;
-
         // ---- $web_search XML handling ----
-        // MiMo returns search requests as XML in content (not in tool_calls)
-        if (message.content && choice.finish_reason === 'tool_calls' && containsWebSearchXml(message.content)) {
+        if (parsed.content && parsed.finishReason === 'tool_calls' && containsWebSearchXml(parsed.content)) {
           this.postMessage({ type: 'toolCall', name: 'web_search', args: 'Searching the web...' });
-          const searchResult = await executeWebSearchFromXml(message.content);
+          const searchResult = await executeWebSearchFromXml(parsed.content);
           if (searchResult) {
             this.postMessage({ type: 'toolResult', name: 'web_search', result: searchResult.results.length > 2000 ? searchResult.results.substring(0, 2000) + '\n...' : searchResult.results });
-            // Send results back to MiMo for synthesis
-            this.conversationHistory.push({ role: 'assistant', content: message.content });
+            this.conversationHistory.push({ role: 'assistant', content: parsed.content });
             this.conversationHistory.push({ role: 'user', content: `[Web search results for: ${searchResult.query}]\n\n${searchResult.results}` });
-            continue; // Next iteration — MiMo will synthesize the answer
+            continue;
           }
         }
 
-        // ---- Visible feedback: AFTER API call ----
-        // Show any intermediate text content from MiMo (progress updates)
-        if (message.content && (choice.finish_reason === 'tool_calls' || message.tool_calls)) {
-          this.postMessage({ type: 'stream', text: message.content + '\n' });
-        }
+        // ---- Tool calls ----
+        if (parsed.toolCalls.length > 0) {
+          // Show any intermediate text from MiMo
+          if (parsed.content) {
+            this.postMessage({ type: 'stream', text: parsed.content + '\n' });
+          }
 
-        if ((choice.finish_reason === 'tool_calls' || message.tool_calls?.length) && message.tool_calls) {
-          this.conversationHistory.push({ role: 'assistant', content: message.content || '', tool_calls: message.tool_calls });
+          this.conversationHistory.push({ role: 'assistant', content: parsed.content || '', tool_calls: parsed.toolCalls });
 
-          for (const toolCall of message.tool_calls) {
+          for (const toolCall of parsed.toolCalls) {
             const tc: ToolCall = { id: toolCall.id, function: { name: toolCall.function.name, arguments: toolCall.function.arguments } };
             const args = JSON.parse(tc.function.arguments);
 
-            // Show tool call BEFORE executing
             this.postMessage({ type: 'toolCall', name: tc.function.name, args: this.formatToolCall(tc.function.name, args) });
 
             lastToolName = tc.function.name;
             toolsUsed.push(tc.function.name);
-
-            // Track files for progress summaries
             if (tc.function.name === 'read_file') filesRead.add(args.path);
             if (tc.function.name === 'write_file' || tc.function.name === 'edit_file') filesModified.add(args.path);
 
             const result = await executeTool(tc);
-
-            // Show abbreviated result AFTER executing
             this.postMessage({ type: 'toolResult', name: tc.function.name, result: result.length > 2000 ? result.substring(0, 2000) + '\n...' : result });
 
             const historyResult = result.length > 4000 ? result.substring(0, 4000) + '\n... (truncated)' : result;
             this.conversationHistory.push({ role: 'tool', content: historyResult, tool_call_id: tc.id });
           }
 
-          // Periodic progress summary every 5 iterations (visible to user, not sent to model)
           if (iteration > 1 && iteration % 5 === 0) {
-            const summary = this.buildProgressSummary(iteration, toolsUsed, filesRead, filesModified);
-            this.postMessage({ type: 'stream', text: summary });
+            this.postMessage({ type: 'stream', text: this.buildProgressSummary(iteration, toolsUsed, filesRead, filesModified) });
           }
         } else {
-          // ---- Final response indicator ----
-          // Show "writing response" while MiMo's final text loads
+          // ---- Final response (already streamed to UI) ----
           if (iteration > 1) {
-            const finalSummary = this.buildProgressSummary(iteration - 1, toolsUsed, filesRead, filesModified);
-            this.postMessage({ type: 'step', text: `Done — ${iteration - 1} steps completed. Writing response...` });
-            this.postMessage({ type: 'stream', text: finalSummary });
+            this.postMessage({ type: 'stream', text: this.buildProgressSummary(iteration - 1, toolsUsed, filesRead, filesModified) });
           }
 
           needsMoreToolCalls = false;
-          if (message.content) {
-            this.postMessage({ type: 'assistantMessage', text: message.content });
-            this.conversationHistory.push({ role: 'assistant', content: message.content });
+          // Content was already streamed token-by-token; now save to history
+          if (parsed.content) {
+            this.postMessage({ type: 'assistantDone' });
+            this.conversationHistory.push({ role: 'assistant', content: parsed.content });
           }
         }
       }
@@ -298,6 +284,100 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       case 'read_image': return `image ${args.path}`;
       default: return `${name}(${JSON.stringify(args).substring(0, 100)})`;
     }
+  }
+
+  /**
+   * Parse SSE streaming response. Streams content tokens to the webview in real-time.
+   * Accumulates tool_calls silently. Returns the complete parsed result.
+   */
+  private async parseSSEResponse(response: Response): Promise<{
+    content: string;
+    toolCalls: any[];
+    finishReason: string;
+    usage: any;
+  }> {
+    let content = '';
+    const toolCallsMap = new Map<number, { id: string; function: { name: string; arguments: string } }>();
+    let finishReason = '';
+    let usage: any = null;
+    let isStreaming = false;
+
+    const body = response.body;
+    if (!body) {
+      // Fallback: non-streaming response (e.g. fallback requests)
+      const data = await response.json() as any;
+      const choice = data.choices?.[0];
+      return {
+        content: choice?.message?.content || '',
+        toolCalls: choice?.message?.tool_calls || [],
+        finishReason: choice?.finish_reason || '',
+        usage: data.usage || null
+      };
+    }
+
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed === 'data: [DONE]') continue;
+          if (!trimmed.startsWith('data: ')) continue;
+
+          try {
+            const json = JSON.parse(trimmed.slice(6));
+            const delta = json.choices?.[0]?.delta;
+            const fr = json.choices?.[0]?.finish_reason;
+            if (fr) finishReason = fr;
+            if (json.usage) usage = json.usage;
+
+            if (delta?.content) {
+              content += delta.content;
+              // Stream content tokens to UI in real-time (only if no tool calls detected yet)
+              if (toolCallsMap.size === 0 && finishReason !== 'tool_calls') {
+                if (!isStreaming) {
+                  isStreaming = true;
+                  this.postMessage({ type: 'streamStart' });
+                }
+                this.postMessage({ type: 'stream', text: delta.content });
+              }
+            }
+
+            // Accumulate tool_calls deltas
+            if (delta?.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index ?? 0;
+                if (!toolCallsMap.has(idx)) {
+                  toolCallsMap.set(idx, { id: tc.id || '', function: { name: '', arguments: '' } });
+                }
+                const entry = toolCallsMap.get(idx)!;
+                if (tc.id) entry.id = tc.id;
+                if (tc.function?.name) entry.function.name += tc.function.name;
+                if (tc.function?.arguments) entry.function.arguments += tc.function.arguments;
+              }
+            }
+          } catch { /* skip malformed SSE lines */ }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    return {
+      content,
+      toolCalls: [...toolCallsMap.values()],
+      finishReason,
+      usage
+    };
   }
 
   private buildProgressSummary(iteration: number, toolsUsed: string[], filesRead: Set<string>, filesModified: Set<string>): string {
@@ -383,6 +463,19 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       case 'copyCode':
         await vscode.env.clipboard.writeText(message.code);
         break;
+      case 'exportChat': {
+        const md = this.conversationHistory
+          .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content && !m.tool_calls)
+          .map(m => m.role === 'user' ? `## User\n\n${m.content}` : `## MiMo\n\n${m.content}`)
+          .join('\n\n---\n\n');
+        const doc = await vscode.workspace.openTextDocument({ content: `# MiMo Chat Export\n\n${md}`, language: 'markdown' });
+        await vscode.window.showTextDocument(doc);
+        break;
+      }
+      case 'setModel':
+        await vscode.workspace.getConfiguration('mimo').update('preferredModel', message.model, vscode.ConfigurationTarget.Workspace);
+        this.postMessage({ type: 'stream', text: `*Model set to ${message.model}*\n` });
+        break;
       case 'pickFile': {
         const fileUris = await vscode.window.showOpenDialog({
           canSelectMany: true, openLabel: 'Add as context',
@@ -449,6 +542,12 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
     <div class="input-toolbar">
       <div class="left">
         <button id="addContextBtn" class="toolbar-btn" title="Attach file">+ File</button>
+        <select id="modelSelect" class="toolbar-select" title="Select model">
+          <option value="auto">Auto</option>
+          <option value="mimo-v2-pro">Pro</option>
+          <option value="mimo-v2-flash">Flash</option>
+        </select>
+        <button id="exportBtn" class="toolbar-btn" title="Export as Markdown">Export</button>
         <button id="tokenUsageBtn" class="toolbar-btn" title="Token usage">Usage</button>
       </div>
       <div class="right">

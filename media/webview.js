@@ -239,6 +239,22 @@
     });
   }
 
+  // Model selector
+  var modelSelect = document.getElementById("modelSelect");
+  if (modelSelect) {
+    modelSelect.addEventListener("change", function () {
+      vscode.postMessage({ type: "setModel", model: modelSelect.value });
+    });
+  }
+
+  // Export chat
+  var exportBtn = document.getElementById("exportBtn");
+  if (exportBtn) {
+    exportBtn.addEventListener("click", function () {
+      vscode.postMessage({ type: "exportChat" });
+    });
+  }
+
   // Clear chat — with confirmation
   newChatBtn.addEventListener("click", function () {
     if (sessionMessages > 0 && !confirm("Clear this conversation? All history will be lost.")) {
@@ -318,13 +334,37 @@
         scrollToBottom();
         break;
 
+      case "streamStart":
+        // New streaming response — create a fresh assistant div
+        currentAssistantDiv = addMessage("", "assistant-msg");
+        break;
+
       case "stream":
         if (currentAssistantDiv) {
-          currentAssistantDiv.innerHTML += renderMarkdown(msg.text);
+          // For SSE streaming, append raw text then re-render
+          if (!currentAssistantDiv._rawText) currentAssistantDiv._rawText = "";
+          currentAssistantDiv._rawText += msg.text;
+          currentAssistantDiv.innerHTML = renderMarkdown(currentAssistantDiv._rawText);
         } else {
           currentAssistantDiv = addMessage(renderMarkdown(msg.text), "assistant-msg");
+          currentAssistantDiv._rawText = msg.text;
         }
         scrollToBottom();
+        break;
+
+      case "assistantDone":
+        // Streaming finished — add insert button if code block present
+        if (currentAssistantDiv && currentAssistantDiv._rawText) {
+          var code = extractCode(currentAssistantDiv._rawText);
+          if (code) {
+            var btn = document.createElement("button");
+            btn.className = "insert-btn";
+            btn.textContent = "Insert into editor";
+            btn.onclick = function () { vscode.postMessage({ type: "insertCode", code: code }); };
+            currentAssistantDiv.appendChild(btn);
+          }
+        }
+        currentAssistantDiv = null;
         break;
 
       case "toolCall":

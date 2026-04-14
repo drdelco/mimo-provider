@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.0 (2026-04-14)
+
+### Streaming responses
+
+- **Real-time token streaming** via SSE — the final response now appears word-by-word instead of arriving all at once after a long silent wait.
+- Streaming applies to ALL iterations: content tokens appear in real-time, tool call deltas are accumulated silently.
+- `streamStart` / `assistantDone` lifecycle messages for proper UI management.
+- Insert code button added after streaming completes.
+
+### Model selector
+
+- **Model dropdown** in the toolbar — switch between Auto, Pro, and Flash without going to settings.
+- Auto mode (default): Pro for complex tasks, Flash for simple tool calls.
+- Selection persists per workspace via `mimo.preferredModel` setting.
+
+### Export conversation
+
+- **Export button** in the toolbar — opens the conversation as a formatted Markdown document.
+- User and assistant messages exported with `## User` / `## MiMo` headings.
+
 ## 0.8.5 (2026-04-14)
 
 ### Smart content extraction

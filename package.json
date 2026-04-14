@@ -2,7 +2,7 @@
   "name": "mimo-provider",
   "displayName": "MiMo by Xiaomi",
   "description": "Use Xiaomi MiMo V2 models as a full coding agent in Antigravity and VS Code — chat panel, tool calling, file editing, terminal execution, and smart context management.",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "publisher": "drdelco",
   "icon": "icon.png",
   "repository": {
@@ -115,6 +115,12 @@
           "type": "boolean",
           "default": true,
           "description": "Use Xiaomi's native Web Search plugin (requires it to be enabled at platform.xiaomimimo.com > Plugin Management). When disabled, uses free DuckDuckGo-based local search as fallback."
+        },
+        "mimo.preferredModel": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "mimo-v2-pro", "mimo-v2-flash"],
+          "description": "Preferred model. Auto selects Pro for complex tasks and Flash for simple tool calls."
         }
       }
     }

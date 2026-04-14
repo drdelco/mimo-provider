@@ -270,6 +270,17 @@ code {
 
 .toolbar-btn.danger { color: var(--vscode-errorForeground); }
 
+.toolbar-select {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 3px;
+  font-size: 11px;
+  padding: 2px 4px;
+  cursor: pointer;
+  font-family: var(--vscode-font-family);
+}
+
 /* ---- Attached files ---- */
 .attached-files {
   display: flex;
