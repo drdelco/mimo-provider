@@ -21,6 +21,8 @@ interface OAuthProviderConfig {
   audience: string;
   scope: string;
   apiBaseUrl: string;
+  deviceAuthPath: string;  // Path for device authorization endpoint
+  tokenPath: string;       // Path for token endpoint
 }
 
 const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
@@ -31,16 +33,20 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     clientId: '17e5f671-d194-4dfb-9706-5516cb48c098',
     audience: 'https://api.kimi.com',
     scope: 'openid profile email offline_access',
-    apiBaseUrl: 'https://api.kimi.com/coding/v1'
+    apiBaseUrl: 'https://api.kimi.com/coding/v1',
+    deviceAuthPath: '/oauth/device/authorize',
+    tokenPath: '/oauth/token'
   },
   minimax: {
     id: 'minimax',
     name: 'MiniMax',
-    authHost: 'https://platform.minimax.io',
-    clientId: 'openclaw',  // Public client (same as OpenClaw uses)
+    authHost: 'https://api.minimax.io',
+    clientId: '78257093-7e40-4613-99e0-527b14b39113',
     audience: 'https://api.minimax.io',
-    scope: 'openid profile email offline_access',
-    apiBaseUrl: 'https://api.minimax.io/v1'
+    scope: 'openid profile model.completion',
+    apiBaseUrl: 'https://api.minimax.io/anthropic',
+    deviceAuthPath: '/v1/oauth/device_authorize',
+    tokenPath: '/v1/oauth/token'
   }
 };
 
@@ -105,7 +111,7 @@ async function refreshToken(providerId: string, refreshToken: string): Promise<O
   if (!config) return null;
 
   try {
-    const response = await fetch(`${config.authHost}/oauth/token`, {
+    const response = await fetch(`${config.authHost}${config.tokenPath}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -184,7 +190,7 @@ interface TokenResponse {
 }
 
 async function requestDeviceCode(config: OAuthProviderConfig): Promise<DeviceCodeResponse> {
-  const url = `${config.authHost}/oauth/device/authorize`;
+  const url = `${config.authHost}${config.deviceAuthPath}`;
   console.log(`MiMo OAuth: Requesting device code from ${url} with client_id=${config.clientId}`);
   
   const response = await fetch(url, {
@@ -228,7 +234,7 @@ async function pollForToken(
     await new Promise(resolve => setTimeout(resolve, pollInterval));
 
     try {
-      const response = await fetch(`${config.authHost}/oauth/token`, {
+      const response = await fetch(`${config.authHost}${config.tokenPath}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
