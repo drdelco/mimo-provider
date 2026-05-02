@@ -2,9 +2,11 @@
 
 ## 0.9.7 (2026-05-02)
 
-### Kimi (Moonshot) provider + README refresh
+### Kimi (Moonshot) provider + cross-provider fallback + README refresh
 
 - **feat:** Kimi/Moonshot provider support — models loaded from `api.moonshot.cn/v1/models`, supports `kimi-k2`, `kimi-latest`, `moonshot-v1-auto` and more.
+- **feat:** Kimi uses native `$web_search` (same `builtin_function` format as MiMo) — no DuckDuckGo fallback needed.
+- **feat:** Cross-provider fallback system — if a model fails, the extension automatically tries other models from the same provider, then other providers, then hardcoded fallbacks. Failed models enter a 1-minute cooldown.
 - **feat:** `kimi-install.sh` helper script for quick setup on macOS/Linux.
 - **docs:** README restructured — removed "What's new" section (already in CHANGELOG), highlighted multi-provider support (MiMo + DeepSeek + Kimi) in header, added provider table with model names and key prefixes.
 

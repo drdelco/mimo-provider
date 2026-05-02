@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall, containsWebSearchXml, executeWebSearchFromXml } from './tools';
 import { buildSystemPrompt, invalidatePromptCache } from './prompt';
 import { ChatMessage, compressHistory } from './context';
-import { pickModel, getModel, getApiConfig, getApiConfigForModel } from './provider';
+import { pickModel, getModel, getApiConfig, getApiConfigForModel, markModelSuccess, markModelFailed, getFallbackChain } from './provider';
 
 export class MiMoChatParticipant {
   private conversationHistory: ChatMessage[] = [];
@@ -76,11 +76,7 @@ export class MiMoChatParticipant {
           stream.markdown(`\n\n📊 **Checkpoint (${iteration}/${maxIterations})** — pidiendo resumen de progreso...\n\n`);
           this.conversationHistory.push({
             role: 'user',
-            content: `⚠️ PUNTO DE CONTROL: Llevas ${iteration - 1} iteraciones. Antes de continuar, haz un resumen rápido de:
-1. Qué has hecho hasta ahora
-2. Qué falta por hacer
-3. Si estás en un bucle o estancado, dilo claramente
-Continúa después del resumen.`
+            content: `⚠️ PUNTO DE CONTROL: Llevas ${iteration} pasos. Resume brevemente: 1) qué has hecho 2) qué queda 3) si estás atascado, dilo claramente. Luego continúa.`
           });
         }
 
@@ -106,7 +102,7 @@ Continúa después del resumen.`
         const useThinking = modelSpec.supportsThinking && (iteration === 1 || iteration % CHECKPOINT_INTERVAL === 0);
 
         const useXiaomiSearch = vscode.workspace.getConfiguration('mimo').get('webSearch');
-        // Xiaomi builtin_function ($web_search) is not compatible with DeepSeek
+        // Xiaomi/Kimi builtin_function ($web_search) is not compatible with DeepSeek
         const tools = isDeepSeek
           ? [...TOOLS, ...LOCAL_WEB_TOOLS]
           : (useXiaomiSearch ? [...TOOLS, ...LOCAL_WEB_TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS]);
@@ -150,10 +146,10 @@ Continúa después del resumen.`
           });
         }
 
-        // Web search fallback: if Xiaomi plugin fails for ANY reason, retry with DuckDuckGo
+        // Web search fallback: if Xiaomi/Kimi plugin fails, retry with DuckDuckGo
         if (!response.ok && useXiaomiSearch) {
           const errDetail = await response.text().catch(() => '');
-          stream.markdown(`*Xiaomi $web_search failed (${response.status}: ${errDetail.substring(0, 100)}) — switching to DuckDuckGo...*\n\n`);
+          stream.markdown(`*$web_search failed (${response.status}: ${errDetail.substring(0, 100)}) — switching to DuckDuckGo...*\n\n`);
           requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
           response = await fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
@@ -166,10 +162,52 @@ Continúa después del resumen.`
           });
         }
 
+        // Cross-provider fallback: try other models if the current one fails
         if (!response.ok) {
-          const errorText = await response.text();
-          stream.markdown(`**Error** (${response.status}): ${errorText}`);
-          return;
+          markModelFailed(modelId);
+          const fallbackChain = getFallbackChain(modelId, false);
+          let fallbackSuccess = false;
+
+          for (const fallbackId of fallbackChain) {
+            const fbSpec = getModel(fallbackId);
+            const fbConfig = getApiConfigForModel(fallbackId);
+            const fbIsDeepSeek = fallbackId.startsWith('deepseek');
+
+            stream.markdown(`*Model ${modelId} failed (${response.status}) — trying ${fallbackId}...*\n\n`);
+
+            requestBody.model = fallbackId;
+            requestBody.max_completion_tokens = Math.min(fbSpec.maxOutputTokens, 32768);
+            if (fbIsDeepSeek) {
+              delete requestBody.thinking;
+              requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
+            } else {
+              requestBody.thinking = { type: 'enabled' };
+            }
+
+            response = await fetch(`${fbConfig.baseUrl}/chat/completions`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${fbConfig.apiKey}`
+              },
+              body: JSON.stringify(requestBody),
+              signal: AbortSignal.timeout(300000)
+            });
+
+            if (response.ok) {
+              markModelSuccess(fallbackId);
+              fallbackSuccess = true;
+              break;
+            }
+          }
+
+          if (!fallbackSuccess) {
+            const errorText = await response.text();
+            stream.markdown(`**Error** — all models failed. Last error (${response.status}): ${errorText}`);
+            return;
+          }
+        } else {
+          markModelSuccess(modelId);
         }
 
         const data = await response.json() as any;
@@ -182,100 +220,65 @@ Continúa después del resumen.`
         const message = choice.message;
 
         // $web_search XML handling — MiMo returns search as XML in content
-        if (message.content && choice.finish_reason === 'tool_calls' && containsWebSearchXml(message.content)) {
-          stream.markdown('*Searching the web...*\n\n');
+        if (message.content && message.finish_reason === 'tool_calls' && containsWebSearchXml(message.content)) {
+          stream.markdown('🔍 *Searching the web...*\n\n');
           const searchResult = await executeWebSearchFromXml(message.content);
           if (searchResult) {
+            stream.markdown(`**Web search:** ${searchResult.query}\n\n`);
             this.conversationHistory.push({ role: 'assistant', content: message.content });
             this.conversationHistory.push({ role: 'user', content: `[Web search results for: ${searchResult.query}]\n\n${searchResult.results}` });
             continue;
           }
         }
 
-        // If MiMo wants to call tools
-        if (choice.finish_reason === 'tool_calls' && message.tool_calls) {
-          // Add assistant message (with tool calls) to history
-          this.conversationHistory.push({
-            role: 'assistant',
-            content: message.content || '',
-            tool_calls: message.tool_calls
-          });
-
-          // Execute each tool call
-          for (const toolCall of message.tool_calls) {
-            const tc: ToolCall = {
-              id: toolCall.id,
-              function: {
-                name: toolCall.function.name,
-                arguments: toolCall.function.arguments
-              }
-            };
-
-            // Show tool execution in stream
-            const args = JSON.parse(tc.function.arguments);
-            const toolLabel = this.formatToolCall(tc.function.name, args);
-            stream.markdown(`\n🔧 \`${toolLabel}\`\n`);
-
-            // Execute the tool
-            lastToolName = tc.function.name;
-            const result = await executeTool(tc);
-
-            // Show abbreviated result
-            const displayResult = result.length > 500
-              ? result.substring(0, 500) + '\n... (ver resultado completo en el historial)'
-              : result;
-            stream.markdown(`\`\`\`\n${displayResult}\n\`\`\`\n`);
-
-            // Add tool result to history
-            this.conversationHistory.push({
-              role: 'tool',
-              content: result.length > 4000 ? result.substring(0, 4000) + '\n... (truncated)' : result,
-              tool_call_id: tc.id
-            });
+        // Handle tool calls
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          // Show any intermediate text from MiMo
+          if (message.content) {
+            stream.markdown(message.content + '\n\n');
           }
-        } else {
-          // MiMo has a final text response
-          needsMoreToolCalls = false;
 
+          this.conversationHistory.push({ role: 'assistant', content: message.content || '', tool_calls: message.tool_calls });
+
+          for (const toolCall of message.tool_calls) {
+            const toolName = toolCall.function.name;
+            const toolArgs = JSON.parse(toolCall.function.arguments || '{}');
+
+            stream.markdown(`🔧 *${toolName}*\n\n`);
+
+            try {
+              const tc: ToolCall = { id: toolCall.id, function: { name: toolName, arguments: JSON.stringify(toolArgs) } };
+              const result = await executeTool(tc);
+              const resultText = typeof result === 'string' ? result : JSON.stringify(result);
+
+              this.conversationHistory.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: resultText
+              });
+
+              lastToolName = toolName;
+            } catch (err: any) {
+              this.conversationHistory.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: `Error: ${err.message}`
+              });
+            }
+          }
+
+          needsMoreToolCalls = true;
+        } else {
+          // No tool calls — we're done
           if (message.content) {
             stream.markdown(message.content);
-            this.conversationHistory.push({
-              role: 'assistant',
-              content: message.content
-            });
           }
+          this.conversationHistory.push({ role: 'assistant', content: message.content || '' });
+          needsMoreToolCalls = false;
         }
       }
-
-      if (iteration >= maxIterations) {
-        stream.markdown('\n\n⚠️ *Límite de seguridad alcanzado (' + maxIterations + ' iteraciones). Si necesitas más, repite el comando.*');
-      }
-
-    } catch (error: any) {
-      if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-        stream.markdown('❌ **Timeout**: La conexión con MiMo tardó más de 120 segundos.');
-      } else {
-        stream.markdown(`❌ **Error**: ${error.message}`);
-      }
+    } catch (err: any) {
+      stream.markdown(`\n\n❌ **Error:** ${err.message}`);
     }
-  }
-
-  private formatToolCall(name: string, args: any): string {
-    switch (name) {
-      case 'read_file': return `read ${args.path}${args.offset ? ':' + args.offset : ''}`;
-      case 'write_file': return `write ${args.path} (${args.content?.length || 0} chars)`;
-      case 'edit_file': return `edit ${args.path}${args.replace_all ? ' (all)' : ''}`;
-      case 'run_terminal': return `$ ${args.command}`;
-      case 'search_files': return `search "${args.pattern}"${args.glob ? ' in ' + args.glob : ''}`;
-      case 'list_files': return `ls ${args.path || '.'}${args.recursive ? ' -R' : ''}`;
-      case 'find_files': return `find ${args.pattern}`;
-      case 'get_diagnostics': return `diagnostics ${args.path || 'all'}`;
-      default: return `${name}(${JSON.stringify(args)})`;
-    }
-  }
-
-  clearHistory(): void {
-    this.conversationHistory = [];
-    invalidatePromptCache();
   }
 }

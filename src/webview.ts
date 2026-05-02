@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall, containsWebSearchXml, executeWebSearchFromXml } from './tools';
 import { buildSystemPrompt, invalidatePromptCache } from './prompt';
 import { ChatMessage, compressHistory, serializeHistory, deserializeHistory } from './context';
-import { pickModel, getModel, getModels, getApiConfig, fetchModelsFromApi, getModelOptions, getApiConfigForModel } from './provider';
+import { pickModel, getModel, getModels, getApiConfig, fetchModelsFromApi, getModelOptions, getApiConfigForModel, markModelSuccess, markModelFailed, getFallbackChain } from './provider';
 
 export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'mimo.chatView';
@@ -227,7 +227,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           signal: AbortSignal.timeout(300000)
         });
 
-        // Flash fallback to Pro (non-streaming for fallback simplicity)
+        // Flash fallback to Pro
         if (!response.ok && modelId === 'mimo-v2-flash') {
           const fb = getModel('mimo-v2-pro');
           requestBody.model = 'mimo-v2-pro';
@@ -241,10 +241,10 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           });
         }
 
-        // Web search fallback
+        // Web search fallback: if Xiaomi/Kimi plugin fails, retry with DuckDuckGo
         if (!response.ok && useXiaomiSearch) {
           const errDetail = await response.text().catch(() => '');
-          this.postMessage({ type: 'stream', text: `*Xiaomi $web_search failed (${response.status}: ${errDetail.substring(0, 100)}) — switching to DuckDuckGo...*\n` });
+          this.postMessage({ type: 'stream', text: `*$web_search failed (${response.status}: ${errDetail.substring(0, 100)}) - switching to DuckDuckGo...*\n` });
           requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
           response = await fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
@@ -254,10 +254,49 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           });
         }
 
+        // Cross-provider fallback: try other models if the current one fails
         if (!response.ok) {
-          const errorText = await response.text();
-          this.postMessage({ type: 'error', text: `Error ${response.status}: ${errorText}` });
-          return;
+          markModelFailed(modelId);
+          const fallbackChain = getFallbackChain(modelId, false);
+          let fallbackSuccess = false;
+
+          for (const fallbackId of fallbackChain) {
+            const fbSpec = getModel(fallbackId);
+            const fbConfig = getApiConfigForModel(fallbackId);
+            const fbIsDeepSeek = fallbackId.startsWith('deepseek');
+
+            this.postMessage({ type: 'stream', text: `*Model ${modelId} failed (${response.status}) - trying ${fallbackId}...*\n` });
+
+            requestBody.model = fallbackId;
+            requestBody.max_completion_tokens = Math.min(fbSpec.maxOutputTokens, 32768);
+            if (fbIsDeepSeek) {
+              delete requestBody.thinking;
+              requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
+            } else {
+              requestBody.thinking = { type: 'enabled' };
+            }
+
+            response = await fetch(`${fbConfig.baseUrl}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${fbConfig.apiKey}` },
+              body: JSON.stringify(requestBody),
+              signal: AbortSignal.timeout(300000)
+            });
+
+            if (response.ok) {
+              markModelSuccess(fallbackId);
+              fallbackSuccess = true;
+              break;
+            }
+          }
+
+          if (!fallbackSuccess) {
+            const errorText = await response.text();
+            this.postMessage({ type: 'error', text: `Error - all models failed. Last error (${response.status}): ${errorText}` });
+            return;
+          }
+        } else {
+          markModelSuccess(modelId);
         }
 
         // ---- Parse SSE stream ----

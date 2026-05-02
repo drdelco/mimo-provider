@@ -311,6 +311,141 @@ export function pickModel(hasImages: boolean, lastToolName?: string, _iteration?
 }
 
 // ---------------------------------------------------------------------------
+// Cross-Provider Fallback System
+// ---------------------------------------------------------------------------
+
+// Track failed models to avoid retrying them immediately
+const _failedModels = new Map<string, number>(); // modelId → timestamp of failure
+const FAILURE_COOLDOWN_MS = 60_000; // 1 minute cooldown after failure
+
+/**
+ * Mark a model as failed (called by chat/webview on API error).
+ */
+export function markModelFailed(modelId: string): void {
+  _failedModels.set(modelId, Date.now());
+  console.warn(`MiMo: Model ${modelId} marked as failed`);
+}
+
+/**
+ * Clear failure mark for a model (e.g., on successful response).
+ */
+export function markModelSuccess(modelId: string): void {
+  _failedModels.delete(modelId);
+}
+
+/**
+ * Check if a model is in cooldown (recently failed).
+ */
+function isModelInCooldown(modelId: string): boolean {
+  const failedAt = _failedModels.get(modelId);
+  if (!failedAt) return false;
+  if (Date.now() - failedAt > FAILURE_COOLDOWN_MS) {
+    _failedModels.delete(modelId); // Cooldown expired
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Get the next fallback model when the current one fails.
+ * Tries: same provider → other providers → hardcoded fallbacks.
+ * Returns null if no fallback is available.
+ */
+export function getNextFallbackModel(failedModelId: string, hasImages: boolean): string | null {
+  const models = getModels();
+  const failedModel = models.find(m => m.id === failedModelId);
+  
+  // Mark the failed model
+  markModelFailed(failedModelId);
+  
+  // Filter out failed models and models in cooldown
+  const availableModels = models.filter(m => 
+    m.id !== failedModelId && !isModelInCooldown(m.id)
+  );
+  
+  if (availableModels.length === 0) {
+    console.warn('MiMo: No available fallback models');
+    return null;
+  }
+  
+  // Strategy 1: Try another model from the same provider
+  if (failedModel) {
+    const sameProvider = availableModels.filter(m => m.family === failedModel.family);
+    if (sameProvider.length > 0) {
+      // Prefer models with similar capabilities
+      const similar = sameProvider.find(m => 
+        m.supportsVision === failedModel.supportsVision &&
+        m.supportsThinking === failedModel.supportsThinking
+      );
+      if (similar) {
+        console.log(`MiMo: Fallback to same provider: ${similar.id}`);
+        return similar.id;
+      }
+      // Otherwise, pick the first available from same provider
+      console.log(`MiMo: Fallback to same provider (different capabilities): ${sameProvider[0].id}`);
+      return sameProvider[0].id;
+    }
+  }
+  
+  // Strategy 2: Try another provider
+  const otherProviders = availableModels.filter(m => 
+    !failedModel || m.family !== failedModel.family
+  );
+  
+  if (otherProviders.length > 0) {
+    // If we need vision, prefer vision-capable models
+    if (hasImages) {
+      const visionModel = otherProviders.find(m => m.supportsVision);
+      if (visionModel) {
+        console.log(`MiMo: Fallback to other provider (vision): ${visionModel.id}`);
+        return visionModel.id;
+      }
+    }
+    
+    // Otherwise, prefer reasoning models
+    const reasoningModel = otherProviders.find(m => m.supportsThinking);
+    if (reasoningModel) {
+      console.log(`MiMo: Fallback to other provider (reasoning): ${reasoningModel.id}`);
+      return reasoningModel.id;
+    }
+    
+    // Last resort: any available model
+    console.log(`MiMo: Fallback to other provider (any): ${otherProviders[0].id}`);
+    return otherProviders[0].id;
+  }
+  
+  // Strategy 3: Use hardcoded fallbacks (ignore cooldown for these)
+  const hardcodedFallbacks = FALLBACK_MODELS.filter(m => m.id !== failedModelId);
+  if (hardcodedFallbacks.length > 0) {
+    console.log(`MiMo: Fallback to hardcoded: ${hardcodedFallbacks[0].id}`);
+    return hardcodedFallbacks[0].id;
+  }
+  
+  return null;
+}
+
+/**
+ * Get a ranked list of fallback models for a given model.
+ * Used by chat/webview to try multiple fallbacks in sequence.
+ */
+export function getFallbackChain(modelId: string, hasImages: boolean): string[] {
+  const chain: string[] = [];
+  let current = modelId;
+  const seen = new Set<string>([modelId]);
+  
+  // Build chain of up to 5 fallbacks
+  for (let i = 0; i < 5; i++) {
+    const next = getNextFallbackModel(current, hasImages);
+    if (!next || seen.has(next)) break;
+    chain.push(next);
+    seen.add(next);
+    current = next;
+  }
+  
+  return chain;
+}
+
+// ---------------------------------------------------------------------------
 // VS Code Language Model Chat Provider
 // ---------------------------------------------------------------------------
 
