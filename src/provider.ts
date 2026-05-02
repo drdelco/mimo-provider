@@ -50,6 +50,14 @@ export const PROVIDERS: ProviderDef[] = [
     configKey: 'deepseekApiKey',
     urlKey: 'deepseekBaseUrl',
     defaultBaseUrl: 'https://api.deepseek.com/v1'
+  },
+  {
+    id: 'kimi',
+    name: 'Kimi (Moonshot)',
+    family: 'kimi',
+    configKey: 'kimiApiKey',
+    urlKey: 'kimiBaseUrl',
+    defaultBaseUrl: 'https://api.moonshot.cn/v1'
   }
 ];
 

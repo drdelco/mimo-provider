@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.9 (2026-05-02)
+
+### Kimi settings fields
+
+- **fix:** Added `mimo.kimiApiKey` and `mimo.kimiBaseUrl` configuration fields to `package.json` — Kimi API key is now configurable from VS Code settings UI.
+- **fix:** Registered Kimi provider in `PROVIDERS` registry so it participates in cross-provider fallback.
+
 ## 0.9.8 (2026-05-02)
 
 ### Version bump
