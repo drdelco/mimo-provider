@@ -4,27 +4,29 @@
 
 ### OAuth login for Kimi + MiniMax
 
-- **feat:** OAuth device-code login for Kimi (Moonshot) — `MiMo: Login to Kimi`
-- **feat:** OAuth device-code login for MiniMax — `MiMo: Login to MiniMax`
-- **feat:** OAuth tokens stored securely in VS Code SecretStorage
+- **feat:** OAuth device-code login for **Kimi** (Moonshot) — `MiMo: Login to Kimi`
+- **feat:** OAuth device-code login for **MiniMax** — `MiMo: Login to MiniMax`
+- **feat:** OAuth tokens stored securely in VS Code SecretStorage (encrypted, never in settings.json)
 - **feat:** Auto-refresh tokens before expiry (60s buffer)
 - **feat:** `resolveApiKey()` — settings API key → OAuth token fallback chain
 - **feat:** `getProviderConfigAsync()` / `getApiConfigForModelAsync()` — OAuth-aware config resolution
-- **feat:** `MiMo: OAuth Login Status` command to check login state
-- **feat:** `MiMo: Logout from Kimi/MiniMax` commands
+- **feat:** `MiMo: OAuth Login Status` command to check login state for all providers
+- **feat:** `MiMo: Logout from Kimi` / `MiMo: Logout from MiniMax` commands
 - **feat:** Kimi OAuth uses `api.kimi.com/coding/v1` base URL when logged in
 - **refactor:** chat.ts + webview.ts use async config resolution for OAuth support
+- **docs:** README updated with all 5 providers, OAuth setup instructions, new commands and settings
 
 ## 1.0.0 (2026-05-02)
 
-### MiniMax provider + v1.0.0 milestone
+### MiniMax provider + OpenRouter + v1.0.0 milestone
 
-- **feat:** MiniMax provider support — models loaded from `api.minimax.io/v1/models`, supports `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1` and highspeed variants.
-- **feat:** MiniMax uses DuckDuckGo fallback for web search (no native `$web_search` in chat API).
-- **feat:** MiniMax models participate in cross-provider fallback chain.
-- **feat:** `mimo.minimaxApiKey` and `mimo.minimaxBaseUrl` configuration fields.
-- **fix:** Kimi and MiniMax models now correctly detected in `getApiConfigForModel()`.
-- **refactor:** `isDeepSeek` checks generalized to `needsDuckDuckGo` (covers DeepSeek + MiniMax).
+- **feat:** **MiniMax** provider support — models loaded from `api.minimax.io/v1/models`, supports `MiniMax-M2.5`, `MiniMax-M2.3`, `abab7`, `abab6.5s` and more
+- **feat:** **OpenRouter** provider support — access to 300+ models (Claude, GPT, Gemini, Llama, etc.) via [openrouter.ai](https://openrouter.ai), models loaded from `openrouter.ai/api/v1/models`
+- **feat:** MiniMax uses DuckDuckGo fallback for web search (no native `$web_search` in chat API)
+- **feat:** MiniMax and OpenRouter models participate in cross-provider fallback chain
+- **feat:** `mimo.minimaxApiKey`, `mimo.minimaxBaseUrl`, `mimo.openrouterApiKey`, `mimo.openrouterBaseUrl` configuration fields
+- **fix:** Kimi and MiniMax models now correctly detected in `getApiConfigForModel()`
+- **refactor:** `isDeepSeek` checks generalized to `needsDuckDuckGo` (covers DeepSeek + MiniMax)
 
 ## 0.9.9 (2026-05-02)
 
