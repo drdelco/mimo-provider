@@ -104,7 +104,6 @@ Get your key at [platform.xiaomimimo.com](https://platform.xiaomimimo.com/)
 - `mimo.deepseekApiKey` — [platform.deepseek.com](https://platform.deepseek.com/)
 - `mimo.kimiApiKey` — [platform.moonshot.cn](https://platform.moonshot.cn/)
 - `mimo.minimaxApiKey` — [platform.minimax.io](https://platform.minimax.io/)
-- `mimo.openrouterApiKey` — [openrouter.ai](https://openrouter.ai)
 
 ### OAuth Login (Kimi + MiniMax)
 
@@ -148,7 +147,6 @@ OAuth tokens are used automatically when no API key is configured in settings.
 | `mimo.deepseekApiKey` | `""` | DeepSeek API key (`sk-...`). Get at [platform.deepseek.com](https://platform.deepseek.com/) |
 | `mimo.kimiApiKey` | `""` | Kimi/Moonshot API key (`sk-...`). Get at [platform.moonshot.cn](https://platform.moonshot.cn/) |
 | `mimo.minimaxApiKey` | `""` | MiniMax API key (`sk-...`). Get at [platform.minimax.io](https://platform.minimax.io/) |
-| `mimo.openrouterApiKey` | `""` | OpenRouter API key (`sk-or-...`). Get at [openrouter.ai](https://openrouter.ai) |
 
 ## Requirements
 
