@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { resolveApiKey } from './oauth';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -157,6 +158,46 @@ export function getModel(id: string): MiMoModel {
 /**
  * Get API config for a specific provider.
  * Reads apiKey and baseUrl from VS Code settings.
+ * Falls back to OAuth token if no API key configured.
+ */
+export async function getProviderConfigAsync(providerId: string): Promise<ApiConfig> {
+  const provider = PROVIDERS.find(p => p.id === providerId);
+  if (!provider) {
+    return { apiKey: '', baseUrl: '', provider: PROVIDERS[0] };
+  }
+
+  const config = vscode.workspace.getConfiguration('mimo');
+  const inspectKey = config.inspect<string>(provider.configKey);
+  const settingsApiKey = inspectKey?.workspaceValue || inspectKey?.globalValue || '';
+
+  const inspectUrl = config.inspect<string>(provider.urlKey);
+  const customUrl = inspectUrl?.workspaceValue || inspectUrl?.globalValue;
+
+  // Resolve API key: settings first, then OAuth
+  const resolved = await resolveApiKey(providerId, settingsApiKey);
+  const apiKey = resolved?.apiKey || '';
+
+  // MiMo special: resolve baseUrl from key prefix if no custom URL
+  let baseUrl = customUrl || provider.defaultBaseUrl;
+  if (providerId === 'mimo' && !customUrl && apiKey.startsWith('sk-')) {
+    baseUrl = 'https://api.xiaomimimo.com/v1';
+  }
+
+  // OAuth providers use their coding API base URL
+  if (resolved?.isOAuth) {
+    if (providerId === 'kimi') {
+      baseUrl = customUrl || 'https://api.kimi.com/coding/v1';
+    } else if (providerId === 'minimax') {
+      baseUrl = customUrl || 'https://api.minimax.io/v1';
+    }
+  }
+
+  return { apiKey, baseUrl, provider };
+}
+
+/**
+ * Synchronous version for backward compatibility.
+ * Only checks settings (no OAuth). Use getProviderConfigAsync for OAuth support.
  */
 export function getProviderConfig(providerId: string): ApiConfig {
   const provider = PROVIDERS.find(p => p.id === providerId);
@@ -198,6 +239,22 @@ export function getApiConfigForModel(modelId: string): ApiConfig {
 }
 
 /**
+ * Async version: Get API config for a model with OAuth fallback.
+ */
+export async function getApiConfigForModelAsync(modelId: string): Promise<ApiConfig> {
+  if (modelId.startsWith('deepseek')) {
+    return getProviderConfigAsync('deepseek');
+  }
+  if (modelId.startsWith('MiniMax') || modelId.startsWith('minimax')) {
+    return getProviderConfigAsync('minimax');
+  }
+  if (modelId.startsWith('moonshot') || modelId.startsWith('kimi')) {
+    return getProviderConfigAsync('kimi');
+  }
+  return getProviderConfigAsync('mimo');
+}
+
+/**
  * Legacy: get MiMo API config (for backward compatibility).
  */
 export function getApiConfig(): ApiConfig & { keyType: string; flashAvailable: boolean } {
@@ -226,7 +283,7 @@ export function getApiConfig(): ApiConfig & { keyType: string; flashAvailable: b
  * Returns empty array on failure (caller handles fallback).
  */
 async function fetchProviderModels(provider: ProviderDef): Promise<MiMoModel[]> {
-  const config = getProviderConfig(provider.id);
+  const config = await getProviderConfigAsync(provider.id);
   if (!config.apiKey) return [];
 
   try {

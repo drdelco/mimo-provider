@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall, containsWebSearchXml, executeWebSearchFromXml } from './tools';
 import { buildSystemPrompt, invalidatePromptCache } from './prompt';
 import { ChatMessage, compressHistory } from './context';
-import { pickModel, getModel, getApiConfig, getApiConfigForModel, markModelSuccess, markModelFailed, getFallbackChain } from './provider';
+import { pickModel, getModel, getApiConfig, getApiConfigForModel, getApiConfigForModelAsync, markModelSuccess, markModelFailed, getFallbackChain } from './provider';
 
 export class MiMoChatParticipant {
   private conversationHistory: ChatMessage[] = [];
@@ -29,9 +29,14 @@ export class MiMoChatParticipant {
     stream: vscode.ChatResponseStream,
     token: vscode.CancellationToken
   ): Promise<void> {
-    const { apiKey, baseUrl } = getApiConfig();
+    // Smart model selection
+    const modelId = pickModel(false);
+    const modelSpec = getModel(modelId);
+
+    // Resolve API config with OAuth fallback (model-aware)
+    const { apiKey, baseUrl } = await getApiConfigForModelAsync(modelId);
     if (!apiKey) {
-      stream.markdown('⚠️ **MiMo API Key no configurada.** Usa `Ctrl+Shift+P` → "MiMo: Configure API Key"');
+      stream.markdown('⚠️ **API Key no configurada.** Usa `Ctrl+Shift+P` → "MiMo: Configure API Key" o `MiMo: Login to Kimi/MiniMax`');
       return;
     }
 
@@ -173,7 +178,7 @@ export class MiMoChatParticipant {
 
           for (const fallbackId of fallbackChain) {
             const fbSpec = getModel(fallbackId);
-            const fbConfig = getApiConfigForModel(fallbackId);
+            const fbConfig = await getApiConfigForModelAsync(fallbackId);
             const fbIsDeepSeek = fallbackId.startsWith('deepseek');
             const fbIsMiniMax = fallbackId.startsWith('MiniMax') || fallbackId.startsWith('minimax');
             const fbNeedsDuckDuckGo = fbIsDeepSeek || fbIsMiniMax;

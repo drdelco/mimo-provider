@@ -2,11 +2,15 @@ import * as vscode from 'vscode';
 import { MiMoProvider, fetchModelsFromApi } from './provider';
 import { MiMoChatParticipant } from './chat';
 import { MiMoChatViewProvider } from './webview';
+import { initOAuth, loginWithOAuth, logoutOAuth, getOAuthStatus } from './oauth';
 
 const panels = new Map<number, { panel: vscode.WebviewPanel; provider: MiMoChatViewProvider }>();
 
 export function activate(context: vscode.ExtensionContext) {
   let panelCounter = 0;
+
+  // Initialize OAuth with VS Code secret storage
+  initOAuth(context.secrets);
 
   // Fetch available models from API on activation
   fetchModelsFromApi().then(models => {
@@ -200,6 +204,64 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (error: any) {
         vscode.window.showErrorMessage(`MiMo: ${error.message}`);
       }
+    })
+  );
+
+  // OAuth Login Commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mimo.loginKimi', async () => {
+      try {
+        await loginWithOAuth('kimi');
+        // Refresh models after login
+        fetchModelsFromApi();
+      } catch (err: any) {
+        // Error already shown by loginWithOAuth
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mimo.loginMiniMax', async () => {
+      try {
+        await loginWithOAuth('minimax');
+        fetchModelsFromApi();
+      } catch (err: any) {
+        // Error already shown by loginWithOAuth
+      }
+    })
+  );
+
+  // OAuth Logout Commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mimo.logoutKimi', async () => {
+      await logoutOAuth('kimi');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mimo.logoutMiniMax', async () => {
+      await logoutOAuth('minimax');
+    })
+  );
+
+  // OAuth Status Command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mimo.oauthStatus', async () => {
+      const kimiStatus = await getOAuthStatus('kimi');
+      const miniMaxStatus = await getOAuthStatus('minimax');
+
+      const lines: string[] = [];
+      lines.push(`**Kimi (Moonshot):** ${kimiStatus.loggedIn ? '✅ Logged in' : '❌ Not logged in'}`);
+      if (kimiStatus.expiresAt) {
+        lines.push(`  Expires: ${new Date(kimiStatus.expiresAt).toLocaleString()}`);
+      }
+      lines.push('');
+      lines.push(`**MiniMax:** ${miniMaxStatus.loggedIn ? '✅ Logged in' : '❌ Not logged in'}`);
+      if (miniMaxStatus.expiresAt) {
+        lines.push(`  Expires: ${new Date(miniMaxStatus.expiresAt).toLocaleString()}`);
+      }
+
+      vscode.window.showInformationMessage(lines.join('\n'), { modal: true });
     })
   );
 

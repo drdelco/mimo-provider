@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0 (2026-05-02)
+
+### OAuth login for Kimi + MiniMax
+
+- **feat:** OAuth device-code login for Kimi (Moonshot) — `MiMo: Login to Kimi`
+- **feat:** OAuth device-code login for MiniMax — `MiMo: Login to MiniMax`
+- **feat:** OAuth tokens stored securely in VS Code SecretStorage
+- **feat:** Auto-refresh tokens before expiry (60s buffer)
+- **feat:** `resolveApiKey()` — settings API key → OAuth token fallback chain
+- **feat:** `getProviderConfigAsync()` / `getApiConfigForModelAsync()` — OAuth-aware config resolution
+- **feat:** `MiMo: OAuth Login Status` command to check login state
+- **feat:** `MiMo: Logout from Kimi/MiniMax` commands
+- **feat:** Kimi OAuth uses `api.kimi.com/coding/v1` base URL when logged in
+- **refactor:** chat.ts + webview.ts use async config resolution for OAuth support
+
 ## 1.0.0 (2026-05-02)
 
 ### MiniMax provider + v1.0.0 milestone

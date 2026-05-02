@@ -1,8 +1,8 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall, containsWebSearchXml, executeWebSearchFromXml } from './tools';
 import { buildSystemPrompt, invalidatePromptCache } from './prompt';
 import { ChatMessage, compressHistory, serializeHistory, deserializeHistory } from './context';
-import { pickModel, getModel, getModels, getApiConfig, fetchModelsFromApi, getModelOptions, getApiConfigForModel, markModelSuccess, markModelFailed, getFallbackChain } from './provider';
+import { pickModel, getModel, getModels, getApiConfig, fetchModelsFromApi, getModelOptions, getApiConfigForModel, getApiConfigForModelAsync, markModelSuccess, markModelFailed, getFallbackChain } from './provider';
 
 export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'mimo.chatView';
@@ -77,8 +77,14 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
   public async handleUserMessage(text: string) {
     const baseConfig = getApiConfig();
     if (!baseConfig.apiKey) {
-      this.postMessage({ type: 'error', text: 'API Key not configured. Use Ctrl+Shift+P > "MiMo: Configure API Key"' });
-      return;
+      // Also check OAuth providers
+      const { getValidToken } = await import('./oauth');
+      const hasKimiOAuth = await getValidToken('kimi');
+      const hasMiniMaxOAuth = await getValidToken('minimax');
+      if (!hasKimiOAuth && !hasMiniMaxOAuth) {
+        this.postMessage({ type: 'error', text: 'API Key not configured. Use Ctrl+Shift+P > MiMo: Configure API Key or MiMo: Login to Kimi/MiniMax' });
+        return;
+      }
     }
 
     let userMessage = text;
@@ -115,18 +121,18 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         const stepLabel = iteration === 1 ? 'Analyzing your request...'
           : lastToolName ? `Continuing after ${this.friendlyToolName(lastToolName)}...`
           : 'Processing...';
-        this.postMessage({ type: 'step', text: `Step ${iteration} — ${stepLabel}` });
+        this.postMessage({ type: 'step', text: `Step ${iteration} â€” ${stepLabel}` });
 
         // Inject pending user messages
         while (this.pendingMessages.length > 0) {
           const queuedMsg = this.pendingMessages.shift()!;
           this.conversationHistory.push({ role: 'user', content: `[User message during work]: ${queuedMsg}` });
-          this.postMessage({ type: 'step', text: `Step ${iteration} — incorporating your message...` });
+          this.postMessage({ type: 'step', text: `Step ${iteration} â€” incorporating your message...` });
         }
 
         // Checkpoint every N iterations
         if (iteration > 1 && iteration % CHECKPOINT_INTERVAL === 0) {
-          this.postMessage({ type: 'step', text: `Step ${iteration} — checkpoint, requesting progress summary...` });
+          this.postMessage({ type: 'step', text: `Step ${iteration} â€” checkpoint, requesting progress summary...` });
           this.conversationHistory.push({
             role: 'user',
             content: `CHECKPOINT: ${iteration} iterations done. Give a brief summary: 1) what you did 2) what remains 3) if stuck, say so clearly. Then continue.`
@@ -135,7 +141,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
 
         let modelId = pickModel(this._pendingImages.length > 0, lastToolName, iteration);
         let modelSpec = getModel(modelId);
-        let { apiKey, baseUrl } = getApiConfigForModel(modelId);
+        let { apiKey, baseUrl } = await getApiConfigForModelAsync(modelId);
         const isDeepSeek = modelId.startsWith('deepseek');
         const isMiniMax = modelId.startsWith('MiniMax') || modelId.startsWith('minimax');
         const needsDuckDuckGo = isDeepSeek || isMiniMax;
@@ -165,9 +171,9 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           // Tell the webview to remove the image thumbnails
           this.postMessage({ type: 'clearImages' });
         } else if (this._pendingImages.length > 0 && !modelSpec.supportsVision) {
-          // No vision model available — use read_image tool as fallback
+          // No vision model available â€” use read_image tool as fallback
           // Save images to temp files and inject read_image tool calls into the conversation
-          this.postMessage({ type: 'step', text: 'Step ' + iteration + ' — images detected, switching to vision-capable model...' });
+          this.postMessage({ type: 'step', text: 'Step ' + iteration + ' â€” images detected, switching to vision-capable model...' });
           // Force switch to a vision model for this iteration
           const visionModels = getModels().filter(m => m.supportsVision);
           if (visionModels.length > 0) {
@@ -175,7 +181,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
             const visionModel = visionModels[0];
             modelId = visionModel.id;
             modelSpec = visionModel;
-            const vc = getApiConfigForModel(modelId);
+            const vc = await getApiConfigForModelAsync(modelId);
             apiKey = vc.apiKey;
             baseUrl = vc.baseUrl;
             // Re-inject images with the vision model
@@ -195,7 +201,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
             this._pendingImages = [];
             this.postMessage({ type: 'clearImages' });
           } else {
-            // Truly no vision model — clear images and inform user
+            // Truly no vision model â€” clear images and inform user
             this._pendingImages = [];
             this.postMessage({ type: 'clearImages' });
             this.postMessage({ type: 'stream', text: '*No vision-capable model available. Images were discarded. Please describe what you see in the screenshot.*\n' });
@@ -204,7 +210,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
 
         const messages = rawMessages;
 
-        // Only think on first iteration and checkpoints — fast mode for tool calls
+        // Only think on first iteration and checkpoints â€” fast mode for tool calls
         const useThinking = modelSpec.supportsThinking && (iteration === 1 || iteration % CHECKPOINT_INTERVAL === 0);
 
         const useXiaomiSearch = vscode.workspace.getConfiguration('mimo').get('webSearch');
@@ -264,7 +270,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
 
           for (const fallbackId of fallbackChain) {
             const fbSpec = getModel(fallbackId);
-            const fbConfig = getApiConfigForModel(fallbackId);
+            const fbConfig = await getApiConfigForModelAsync(fallbackId);
             const fbIsDeepSeek = fallbackId.startsWith('deepseek');
             const fbIsMiniMax = fallbackId.startsWith('MiniMax') || fallbackId.startsWith('minimax');
             const fbNeedsDuckDuckGo = fbIsDeepSeek || fbIsMiniMax;
@@ -519,15 +525,15 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
     const edits = toolsUsed.filter(t => t === 'edit_file' || t === 'write_file').length;
 
     let html = '<div class="festive-summary">';
-    html += '<div class="festive-header">🎉🏆 <b>Task Complete!</b> 🏆🎉</div>';
+    html += '<div class="festive-header">ðŸŽ‰ðŸ† <b>Task Complete!</b> ðŸ†ðŸŽ‰</div>';
     html += '<div class="festive-stats">';
-    html += `<div class="stat">⚡ <b>${iteration}</b> steps executed</div>`;
-    html += `<div class="stat">📖 <b>${reads}</b> files read · 📁 <b>${filesRead.size}</b> unique</div>`;
-    html += `<div class="stat">✏️ <b>${edits}</b> edits made · 📝 <b>${filesModified.size}</b> files modified</div>`;
-    if (commands > 0) html += `<div class="stat">🖥️ <b>${commands}</b> commands run</div>`;
-    if (searches > 0) html += `<div class="stat">🔍 <b>${searches}</b> searches performed</div>`;
+    html += `<div class="stat">âš¡ <b>${iteration}</b> steps executed</div>`;
+    html += `<div class="stat">ðŸ“– <b>${reads}</b> files read Â· ðŸ“ <b>${filesRead.size}</b> unique</div>`;
+    html += `<div class="stat">âœï¸ <b>${edits}</b> edits made Â· ðŸ“ <b>${filesModified.size}</b> files modified</div>`;
+    if (commands > 0) html += `<div class="stat">ðŸ–¥ï¸ <b>${commands}</b> commands run</div>`;
+    if (searches > 0) html += `<div class="stat">ðŸ” <b>${searches}</b> searches performed</div>`;
     html += '</div>';
-    html += '<div class="festive-footer">🚀✨ <i>Excellent work! Ready for the next challenge.</i> ✨🚀</div>';
+    html += '<div class="festive-footer">ðŸš€âœ¨ <i>Excellent work! Ready for the next challenge.</i> âœ¨ðŸš€</div>';
     html += '</div>';
     return html;
   }
@@ -582,7 +588,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       case 'sendMessage':
         if (this.isProcessing) {
           this.pendingMessages.push(message.text);
-          this.postMessage({ type: 'stream', text: '*(Message queued — will be incorporated in the next step)*\n' });
+          this.postMessage({ type: 'stream', text: '*(Message queued â€” will be incorporated in the next step)*\n' });
         } else {
           await this.handleUserMessage(message.text);
         }
