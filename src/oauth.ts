@@ -184,7 +184,10 @@ interface TokenResponse {
 }
 
 async function requestDeviceCode(config: OAuthProviderConfig): Promise<DeviceCodeResponse> {
-  const response = await fetch(`${config.authHost}/oauth/device/authorize`, {
+  const url = `${config.authHost}/oauth/device/authorize`;
+  console.log(`MiMo OAuth: Requesting device code from ${url} with client_id=${config.clientId}`);
+  
+  const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -197,10 +200,13 @@ async function requestDeviceCode(config: OAuthProviderConfig): Promise<DeviceCod
 
   if (!response.ok) {
     const text = await response.text().catch(() => '');
+    console.error(`MiMo OAuth: Device code request failed: ${response.status} ${text}`);
     throw new Error(`Device code request failed (${response.status}): ${text}`);
   }
 
-  return response.json() as Promise<DeviceCodeResponse>;
+  const data = await response.json() as DeviceCodeResponse;
+  console.log(`MiMo OAuth: Got device code, verification_uri=${data.verification_uri}`);
+  return data;
 }
 
 async function pollForToken(
@@ -285,11 +291,24 @@ export async function loginWithOAuth(providerId: 'kimi' | 'minimax'): Promise<st
   }
 
   // Step 1: Request device code
-  const deviceCode = await requestDeviceCode(config);
+  let deviceCode: DeviceCodeResponse;
+  try {
+    deviceCode = await requestDeviceCode(config);
+  } catch (err: any) {
+    const msg = `Failed to start login for ${config.name}: ${err.message}`;
+    vscode.window.showErrorMessage(msg);
+    throw new Error(msg);
+  }
 
   // Step 2: Open browser for user authorization
   const authUrl = deviceCode.verification_uri_complete || deviceCode.verification_uri;
-  await vscode.env.openExternal(vscode.Uri.parse(authUrl));
+  try {
+    await vscode.env.openExternal(vscode.Uri.parse(authUrl));
+  } catch (err: any) {
+    vscode.window.showWarningMessage(
+      `Could not open browser automatically. Please open this URL manually:\n${authUrl}`
+    );
+  }
 
   // Step 3: Show progress while polling
   return vscode.window.withProgress<string>(
