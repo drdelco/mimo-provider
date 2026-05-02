@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.8 (2026-05-02)
+
+### Version bump
+
+- Patch release with no functional changes from 0.9.7.
+
 ## 0.9.7 (2026-05-02)
 
 ### Kimi (Moonshot) provider + cross-provider fallback + README refresh
