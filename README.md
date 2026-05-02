@@ -1,22 +1,18 @@
 # MiMo by Xiaomi — Antigravity / VS Code Extension
 
-Use **Xiaomi MiMo** language models as a full coding agent inside Google Antigravity and VS Code.
-
-## What's new
-
-- **0.9.4** — Multi-provider support: add DeepSeek API key in settings to use DeepSeek models alongside MiMo. Models from both providers are fetched in parallel and merged into a single selector. Routing is automatic based on model ID. DeepSeek's `reasoning_content` field is captured during SSE streaming.
-- **0.9.3** — Fix: duplicate messages after SSE streaming; fix: image thumbnails not cleared after send; fix: auto-switch to vision model when images are attached to a non-vision model.
-- **0.9.2** — Fixes the `defaultChatParticipant` activation error (extension was being blocked on launch). New: animated "thinking…" indicator, non-intrusive smart scroll, image paste from clipboard (`Ctrl+V`), dynamic model list from the API with auto-switch to vision variant on image attach, festive stats summary every 10 iterations, and auto-retry with fallback model on failure.
-- **0.9.1** — Pre-flight checks added to the system prompt (9 rules from real-world failure modes); web search instructions consolidated.
-- **0.9.0** — Real-time SSE streaming, model selector dropdown (Auto / Pro / Flash), export conversation as Markdown.
-- **0.8.5** — Readability-style content extraction for `fetch_url`; lightweight in-chat syntax highlighting.
-- **0.8.4** — DuckDuckGo rate-limit handling, auto-retry search, copy-code button.
+Use **Xiaomi MiMo**, **DeepSeek** and **Kimi (Moonshot)** language models as a full coding agent inside Google Antigravity and VS Code.
 
 Full history in [CHANGELOG.md](CHANGELOG.md).
 
 ## Models
 
-Models are **loaded dynamically** from the Xiaomi MiMo API at startup. The extension fetches the latest available model list from `/models` and populates the selector automatically. If the API is unreachable, it falls back to a built-in default list.
+Models are **loaded dynamically** from each provider's API at startup. The extension fetches the latest available model list and populates the selector automatically. If an API is unreachable, it falls back to built-in defaults.
+
+| Provider | Models | API Key prefix |
+|----------|--------|----------------|
+| **Xiaomi MiMo** | mimo-v2-pro, mimo-v2-flash, mimo-v2-omni | `tp-...` or `sk-...` |
+| **DeepSeek** | deepseek-chat, deepseek-reasoner | `sk-...` |
+| **Kimi (Moonshot)** | kimi-k2, kimi-latest, moonshot-v1-auto | `sk-...` |
 
 The extension automatically selects the best model for each step:
 - **Pro** (or equivalent reasoning model) for complex multi-step tasks
@@ -126,11 +122,16 @@ Get your key at [platform.xiaomimimo.com](https://platform.xiaomimimo.com/)
 | `mimo.preferredModel` | `"auto"` | Preferred model (`auto`, `mimo-v2-pro`, `mimo-v2-flash`). Auto selects Pro for complex tasks and Flash for simple tool calls |
 | `mimo.useFlashForSimpleTasks` | `false` | Use Flash for simple tool calls (only if your plan includes Flash) |
 | `mimo.webSearch` | `true` | Enable Xiaomi's native Web Search plugin (requires activation at [platform.xiaomimimo.com](https://platform.xiaomimimo.com) > Plugin Management). When disabled, uses free DuckDuckGo-based local search as fallback |
+| `mimo.deepseekApiKey` | `""` | DeepSeek API key (`sk-...`). Get at [platform.deepseek.com](https://platform.deepseek.com/) |
+| `mimo.kimiApiKey` | `""` | Kimi/Moonshot API key (`sk-...`). Get at [platform.moonshot.cn](https://platform.moonshot.cn/) |
 
 ## Requirements
 
 - Google Antigravity or VS Code 1.90+
-- Xiaomi MiMo API key ([platform.xiaomimimo.com](https://platform.xiaomimimo.com/))
+- At least one API key:
+  - **Xiaomi MiMo**: [platform.xiaomimimo.com](https://platform.xiaomimimo.com/)
+  - **DeepSeek**: [platform.deepseek.com](https://platform.deepseek.com/)
+  - **Kimi (Moonshot)**: [platform.moonshot.cn](https://platform.moonshot.cn/)
 
 ## License
 
