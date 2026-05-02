@@ -1,6 +1,6 @@
 # MiMo by Xiaomi — Antigravity / VS Code Extension
 
-Use **Xiaomi MiMo**, **DeepSeek**, **Kimi (Moonshot)**, **MiniMax** and **OpenRouter** language models as a full coding agent inside Google Antigravity and VS Code.
+Use **Xiaomi MiMo**, **DeepSeek**, **Kimi (Moonshot)** and **MiniMax** language models as a full coding agent inside Google Antigravity and VS Code.
 
 Full history in [CHANGELOG.md](CHANGELOG.md).
 
@@ -14,7 +14,6 @@ Models are **loaded dynamically** from each provider's API at startup. The exten
 | **DeepSeek** | deepseek-chat, deepseek-reasoner | `sk-...` |
 | **Kimi (Moonshot)** | kimi-k2, kimi-latest, moonshot-v1-auto | `sk-...` |
 | **MiniMax** | MiniMax-M2.5, MiniMax-M2.3, abab7, abab6.5s | `sk-...` |
-| **OpenRouter** | Any model on [openrouter.ai](https://openrouter.ai) (Claude, GPT, Gemini, Llama, etc.) | `sk-or-...` |
 
 The extension automatically selects the best model for each step:
 - **Pro** (or equivalent reasoning model) for complex multi-step tasks

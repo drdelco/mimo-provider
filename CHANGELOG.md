@@ -18,13 +18,12 @@
 
 ## 1.0.0 (2026-05-02)
 
-### MiniMax provider + OpenRouter + v1.0.0 milestone
+### MiniMax provider + v1.0.0 milestone
 
 - **feat:** **MiniMax** provider support — models loaded from `api.minimax.io/v1/models`, supports `MiniMax-M2.5`, `MiniMax-M2.3`, `abab7`, `abab6.5s` and more
-- **feat:** **OpenRouter** provider support — access to 300+ models (Claude, GPT, Gemini, Llama, etc.) via [openrouter.ai](https://openrouter.ai), models loaded from `openrouter.ai/api/v1/models`
 - **feat:** MiniMax uses DuckDuckGo fallback for web search (no native `$web_search` in chat API)
-- **feat:** MiniMax and OpenRouter models participate in cross-provider fallback chain
-- **feat:** `mimo.minimaxApiKey`, `mimo.minimaxBaseUrl`, `mimo.openrouterApiKey`, `mimo.openrouterBaseUrl` configuration fields
+- **feat:** MiniMax models participate in cross-provider fallback chain
+- **feat:** `mimo.minimaxApiKey` and `mimo.minimaxBaseUrl` configuration fields
 - **fix:** Kimi and MiniMax models now correctly detected in `getApiConfigForModel()`
 - **refactor:** `isDeepSeek` checks generalized to `needsDuckDuckGo` (covers DeepSeek + MiniMax)
 
