@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0 (2026-05-02)
+
+### MiniMax provider + v1.0.0 milestone
+
+- **feat:** MiniMax provider support — models loaded from `api.minimax.io/v1/models`, supports `MiniMax-M2.7`, `MiniMax-M2.5`, `MiniMax-M2.1` and highspeed variants.
+- **feat:** MiniMax uses DuckDuckGo fallback for web search (no native `$web_search` in chat API).
+- **feat:** MiniMax models participate in cross-provider fallback chain.
+- **feat:** `mimo.minimaxApiKey` and `mimo.minimaxBaseUrl` configuration fields.
+- **fix:** Kimi and MiniMax models now correctly detected in `getApiConfigForModel()`.
+- **refactor:** `isDeepSeek` checks generalized to `needsDuckDuckGo` (covers DeepSeek + MiniMax).
+
 ## 0.9.9 (2026-05-02)
 
 ### Kimi settings fields

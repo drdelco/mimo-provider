@@ -2,7 +2,7 @@
   "name": "mimo-provider",
   "displayName": "MiMo by Xiaomi",
   "description": "Use Xiaomi MiMo V2 models as a full coding agent in Antigravity and VS Code — chat panel, tool calling, file editing, terminal execution, and smart context management.",
-  "version": "0.9.9",
+  "version": "1.0.0",
   "publisher": "drdelco",
   "icon": "icon.png",
   "repository": {
@@ -158,6 +158,16 @@
           "type": "string",
           "default": "https://api.moonshot.cn/v1",
           "description": "Kimi (Moonshot) API base URL"
+        },
+        "mimo.minimaxApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "MiniMax API Key (get one at platform.minimax.io)"
+        },
+        "mimo.minimaxBaseUrl": {
+          "type": "string",
+          "default": "https://api.minimax.io/v1",
+          "description": "MiniMax API base URL"
         }
       }
     }

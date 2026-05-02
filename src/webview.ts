@@ -137,6 +137,8 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         let modelSpec = getModel(modelId);
         let { apiKey, baseUrl } = getApiConfigForModel(modelId);
         const isDeepSeek = modelId.startsWith('deepseek');
+        const isMiniMax = modelId.startsWith('MiniMax') || modelId.startsWith('minimax');
+        const needsDuckDuckGo = isDeepSeek || isMiniMax;
 
         // Build messages array, injecting pending images into the last user message
         const rawMessages: any[] = [
@@ -207,7 +209,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
 
         const useXiaomiSearch = vscode.workspace.getConfiguration('mimo').get('webSearch');
         // Xiaomi builtin_function ($web_search) is not compatible with DeepSeek
-        const tools = isDeepSeek
+        const tools = needsDuckDuckGo
           ? [...TOOLS, ...LOCAL_WEB_TOOLS]
           : (useXiaomiSearch ? [...TOOLS, ...LOCAL_WEB_TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS]);
         const requestBody: Record<string, any> = {
@@ -217,7 +219,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           stream: true,
           max_completion_tokens: Math.min(modelSpec.maxOutputTokens, 32768),
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5,
-          ...(isDeepSeek ? {} : { thinking: { type: useThinking ? 'enabled' : 'disabled' } })
+          ...(needsDuckDuckGo ? {} : { thinking: { type: useThinking ? 'enabled' : 'disabled' } })
         };
 
         let response = await fetch(`${baseUrl}/chat/completions`, {
@@ -232,7 +234,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           const fb = getModel('mimo-v2-pro');
           requestBody.model = 'mimo-v2-pro';
           requestBody.max_completion_tokens = Math.min(fb.maxOutputTokens, 32768);
-          if (!isDeepSeek) { requestBody.thinking = { type: 'enabled' }; }
+          if (!needsDuckDuckGo) { requestBody.thinking = { type: 'enabled' }; }
           response = await fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
@@ -264,12 +266,14 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
             const fbSpec = getModel(fallbackId);
             const fbConfig = getApiConfigForModel(fallbackId);
             const fbIsDeepSeek = fallbackId.startsWith('deepseek');
+            const fbIsMiniMax = fallbackId.startsWith('MiniMax') || fallbackId.startsWith('minimax');
+            const fbNeedsDuckDuckGo = fbIsDeepSeek || fbIsMiniMax;
 
             this.postMessage({ type: 'stream', text: `*Model ${modelId} failed (${response.status}) - trying ${fallbackId}...*\n` });
 
             requestBody.model = fallbackId;
             requestBody.max_completion_tokens = Math.min(fbSpec.maxOutputTokens, 32768);
-            if (fbIsDeepSeek) {
+            if (fbNeedsDuckDuckGo) {
               delete requestBody.thinking;
               requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
             } else {

@@ -97,13 +97,16 @@ export class MiMoChatParticipant {
         const modelSpec = getModel(modelId);
 
         const isDeepSeek = modelId.startsWith('deepseek');
+        const isMiniMax = modelId.startsWith('MiniMax') || modelId.startsWith('minimax');
+        // Providers without native $web_search: DeepSeek, MiniMax
+        const needsDuckDuckGo = isDeepSeek || isMiniMax;
 
         // Only think on first iteration and at checkpoints — fast mode for tool calls
         const useThinking = modelSpec.supportsThinking && (iteration === 1 || iteration % CHECKPOINT_INTERVAL === 0);
 
         const useXiaomiSearch = vscode.workspace.getConfiguration('mimo').get('webSearch');
-        // Xiaomi/Kimi builtin_function ($web_search) is not compatible with DeepSeek
-        const tools = isDeepSeek
+        // Xiaomi/Kimi builtin_function ($web_search) is not compatible with DeepSeek or MiniMax
+        const tools = needsDuckDuckGo
           ? [...TOOLS, ...LOCAL_WEB_TOOLS]
           : (useXiaomiSearch ? [...TOOLS, ...LOCAL_WEB_TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS]);
         const requestBody: Record<string, any> = {
@@ -115,7 +118,7 @@ export class MiMoChatParticipant {
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5
         };
 
-        if (!isDeepSeek) {
+        if (!needsDuckDuckGo) {
           requestBody.thinking = { type: useThinking ? 'enabled' : 'disabled' };
         }
 
@@ -172,12 +175,14 @@ export class MiMoChatParticipant {
             const fbSpec = getModel(fallbackId);
             const fbConfig = getApiConfigForModel(fallbackId);
             const fbIsDeepSeek = fallbackId.startsWith('deepseek');
+            const fbIsMiniMax = fallbackId.startsWith('MiniMax') || fallbackId.startsWith('minimax');
+            const fbNeedsDuckDuckGo = fbIsDeepSeek || fbIsMiniMax;
 
             stream.markdown(`*Model ${modelId} failed (${response.status}) — trying ${fallbackId}...*\n\n`);
 
             requestBody.model = fallbackId;
             requestBody.max_completion_tokens = Math.min(fbSpec.maxOutputTokens, 32768);
-            if (fbIsDeepSeek) {
+            if (fbNeedsDuckDuckGo) {
               delete requestBody.thinking;
               requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
             } else {

@@ -58,6 +58,14 @@ export const PROVIDERS: ProviderDef[] = [
     configKey: 'kimiApiKey',
     urlKey: 'kimiBaseUrl',
     defaultBaseUrl: 'https://api.moonshot.cn/v1'
+  },
+  {
+    id: 'minimax',
+    name: 'MiniMax',
+    family: 'minimax',
+    configKey: 'minimaxApiKey',
+    urlKey: 'minimaxBaseUrl',
+    defaultBaseUrl: 'https://api.minimax.io/v1'
   }
 ];
 
@@ -95,6 +103,36 @@ export const FALLBACK_MODELS: MiMoModel[] = [
     description: 'Fast and efficient, 150+ tokens/sec',
     supportsVision: false,
     supportsThinking: false
+  },
+  {
+    id: 'MiniMax-M2.7',
+    name: 'MiniMax M2.7',
+    family: 'minimax',
+    maxInputTokens: 204_800,
+    maxOutputTokens: 65_536,
+    description: 'Recursive self-improvement, 60 tps',
+    supportsVision: false,
+    supportsThinking: true
+  },
+  {
+    id: 'MiniMax-M2.5',
+    name: 'MiniMax M2.5',
+    family: 'minimax',
+    maxInputTokens: 204_800,
+    maxOutputTokens: 65_536,
+    description: 'Peak performance, tool calling & search',
+    supportsVision: false,
+    supportsThinking: true
+  },
+  {
+    id: 'MiniMax-M2.1',
+    name: 'MiniMax M2.1',
+    family: 'minimax',
+    maxInputTokens: 204_800,
+    maxOutputTokens: 65_536,
+    description: 'Multi-language programming, code refactoring',
+    supportsVision: false,
+    supportsThinking: true
   }
 ];
 
@@ -149,6 +187,12 @@ export function getProviderConfig(providerId: string): ApiConfig {
 export function getApiConfigForModel(modelId: string): ApiConfig {
   if (modelId.startsWith('deepseek')) {
     return getProviderConfig('deepseek');
+  }
+  if (modelId.startsWith('MiniMax') || modelId.startsWith('minimax')) {
+    return getProviderConfig('minimax');
+  }
+  if (modelId.startsWith('moonshot') || modelId.startsWith('kimi')) {
+    return getProviderConfig('kimi');
   }
   return getProviderConfig('mimo');
 }
