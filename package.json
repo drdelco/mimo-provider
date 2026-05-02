@@ -2,7 +2,7 @@
   "name": "mimo-provider",
   "displayName": "MiMo by Xiaomi",
   "description": "Use Xiaomi MiMo V2 models as a full coding agent in Antigravity and VS Code — chat panel, tool calling, file editing, terminal execution, and smart context management.",
-  "version": "0.9.1",
+  "version": "0.9.6",
   "publisher": "drdelco",
   "icon": "icon.png",
   "repository": {
@@ -13,9 +13,23 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["AI", "Other"],
-  "keywords": ["mimo", "xiaomi", "ai", "language-model", "chat", "antigravity", "llm", "coding-assistant"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "mimo",
+    "xiaomi",
+    "ai",
+    "language-model",
+    "chat",
+    "antigravity",
+    "llm",
+    "coding-assistant"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "icons": {
@@ -57,8 +71,7 @@
         "id": "mimo",
         "name": "MiMo",
         "description": "Xiaomi MiMo AI coding assistant",
-        "isSticky": true,
-        "isDefault": true
+        "isSticky": true
       }
     ],
     "commands": [
@@ -119,8 +132,22 @@
         "mimo.preferredModel": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "mimo-v2-pro", "mimo-v2-flash"],
+          "enum": [
+            "auto",
+            "mimo-v2-pro",
+            "mimo-v2-flash"
+          ],
           "description": "Preferred model. Auto selects Pro for complex tasks and Flash for simple tool calls."
+        },
+        "mimo.deepseekApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API Key (get one at platform.deepseek.com)"
+        },
+        "mimo.deepseekBaseUrl": {
+          "type": "string",
+          "default": "https://api.deepseek.com",
+          "description": "DeepSeek API base URL"
         }
       }
     }

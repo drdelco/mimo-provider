@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall, containsWebSearchXml, executeWebSearchFromXml } from './tools';
 import { buildSystemPrompt, invalidatePromptCache } from './prompt';
 import { ChatMessage, compressHistory, serializeHistory, deserializeHistory } from './context';
-import { pickModel, getModel, getApiConfig } from './provider';
+import { pickModel, getModel, getModels, getApiConfig, fetchModelsFromApi, getModelOptions, getApiConfigForModel } from './provider';
 
 export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'mimo.chatView';
@@ -13,6 +13,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
   private isProcessing = false;
   private extensionContext?: vscode.ExtensionContext;
   private tabId?: number;
+  private _pendingImages: string[] = [];
 
   constructor(private readonly extensionUri: vscode.Uri) {}
 
@@ -74,8 +75,8 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   public async handleUserMessage(text: string) {
-    const { apiKey, baseUrl } = getApiConfig();
-    if (!apiKey) {
+    const baseConfig = getApiConfig();
+    if (!baseConfig.apiKey) {
       this.postMessage({ type: 'error', text: 'API Key not configured. Use Ctrl+Shift+P > "MiMo: Configure API Key"' });
       return;
     }
@@ -132,26 +133,91 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           });
         }
 
-        const messages = [
+        let modelId = pickModel(this._pendingImages.length > 0, lastToolName, iteration);
+        let modelSpec = getModel(modelId);
+        let { apiKey, baseUrl } = getApiConfigForModel(modelId);
+        const isDeepSeek = modelId.startsWith('deepseek');
+
+        // Build messages array, injecting pending images into the last user message
+        const rawMessages: any[] = [
           { role: 'system', content: buildSystemPrompt() },
           ...this.conversationHistory
         ];
 
-        const modelId = pickModel(false, lastToolName);
-        const modelSpec = getModel(modelId);
+        // If there are pending images and the model supports vision, inject them
+        if (this._pendingImages.length > 0 && modelSpec.supportsVision) {
+          for (let i = rawMessages.length - 1; i >= 0; i--) {
+            if (rawMessages[i].role === 'user') {
+              const contentParts: any[] = [{ type: 'text', text: rawMessages[i].content }];
+              for (const imgDataUrl of this._pendingImages) {
+                contentParts.push({
+                  type: 'image_url',
+                  image_url: { url: imgDataUrl, detail: 'high' }
+                });
+              }
+              rawMessages[i] = { role: 'user', content: contentParts };
+              break;
+            }
+          }
+          this._pendingImages = []; // Clear after use
+          // Tell the webview to remove the image thumbnails
+          this.postMessage({ type: 'clearImages' });
+        } else if (this._pendingImages.length > 0 && !modelSpec.supportsVision) {
+          // No vision model available — use read_image tool as fallback
+          // Save images to temp files and inject read_image tool calls into the conversation
+          this.postMessage({ type: 'step', text: 'Step ' + iteration + ' — images detected, switching to vision-capable model...' });
+          // Force switch to a vision model for this iteration
+          const visionModels = getModels().filter(m => m.supportsVision);
+          if (visionModels.length > 0) {
+            // Override the model for this request
+            const visionModel = visionModels[0];
+            modelId = visionModel.id;
+            modelSpec = visionModel;
+            const vc = getApiConfigForModel(modelId);
+            apiKey = vc.apiKey;
+            baseUrl = vc.baseUrl;
+            // Re-inject images with the vision model
+            for (let i = rawMessages.length - 1; i >= 0; i--) {
+              if (rawMessages[i].role === 'user') {
+                const contentParts: any[] = [{ type: 'text', text: rawMessages[i].content }];
+                for (const imgDataUrl of this._pendingImages) {
+                  contentParts.push({
+                    type: 'image_url',
+                    image_url: { url: imgDataUrl, detail: 'high' }
+                  });
+                }
+                rawMessages[i] = { role: 'user', content: contentParts };
+                break;
+              }
+            }
+            this._pendingImages = [];
+            this.postMessage({ type: 'clearImages' });
+          } else {
+            // Truly no vision model — clear images and inform user
+            this._pendingImages = [];
+            this.postMessage({ type: 'clearImages' });
+            this.postMessage({ type: 'stream', text: '*No vision-capable model available. Images were discarded. Please describe what you see in the screenshot.*\n' });
+          }
+        }
+
+        const messages = rawMessages;
 
         // Only think on first iteration and checkpoints — fast mode for tool calls
         const useThinking = modelSpec.supportsThinking && (iteration === 1 || iteration % CHECKPOINT_INTERVAL === 0);
 
         const useXiaomiSearch = vscode.workspace.getConfiguration('mimo').get('webSearch');
+        // Xiaomi builtin_function ($web_search) is not compatible with DeepSeek
+        const tools = isDeepSeek
+          ? [...TOOLS, ...LOCAL_WEB_TOOLS]
+          : (useXiaomiSearch ? [...TOOLS, ...LOCAL_WEB_TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS]);
         const requestBody: Record<string, any> = {
           model: modelId,
           messages,
-          tools: useXiaomiSearch ? [...TOOLS, ...LOCAL_WEB_TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS],
+          tools,
           stream: true,
           max_completion_tokens: Math.min(modelSpec.maxOutputTokens, 32768),
           temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5,
-          thinking: { type: useThinking ? 'enabled' : 'disabled' }
+          ...(isDeepSeek ? {} : { thinking: { type: useThinking ? 'enabled' : 'disabled' } })
         };
 
         let response = await fetch(`${baseUrl}/chat/completions`, {
@@ -166,7 +232,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
           const fb = getModel('mimo-v2-pro');
           requestBody.model = 'mimo-v2-pro';
           requestBody.max_completion_tokens = Math.min(fb.maxOutputTokens, 32768);
-          requestBody.thinking = { type: 'enabled' };
+          if (!isDeepSeek) { requestBody.thinking = { type: 'enabled' }; }
           response = await fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
@@ -215,8 +281,8 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
 
         // ---- Tool calls ----
         if (parsed.toolCalls.length > 0) {
-          // Show any intermediate text from MiMo
-          if (parsed.content) {
+          // Show any intermediate text from MiMo (only if not already streamed token-by-token)
+          if (parsed.content && !parsed.wasStreamed) {
             this.postMessage({ type: 'stream', text: parsed.content + '\n' });
           }
 
@@ -258,6 +324,12 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         }
       }
 
+      // Festive summary for long tasks (>50 steps)
+      if (iteration > 50) {
+        const summary = this.buildFestiveSummary(iteration, toolsUsed, filesRead, filesModified);
+        this.postMessage({ type: 'festiveSummary', html: summary });
+      }
+
       this.postMessage({ type: 'streamEnd' });
     } catch (error: any) {
       this.postMessage({ type: 'error', text: error.name === 'TimeoutError' ? 'Timeout (120s)' : error.message });
@@ -295,12 +367,15 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
     toolCalls: any[];
     finishReason: string;
     usage: any;
+    /** true if content was already streamed to the UI token-by-token */
+    wasStreamed: boolean;
   }> {
     let content = '';
     const toolCallsMap = new Map<number, { id: string; function: { name: string; arguments: string } }>();
     let finishReason = '';
     let usage: any = null;
     let isStreaming = false;
+    let wasStreamed = false;
 
     const body = response.body;
     if (!body) {
@@ -311,7 +386,8 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         content: choice?.message?.content || '',
         toolCalls: choice?.message?.tool_calls || [],
         finishReason: choice?.finish_reason || '',
-        usage: data.usage || null
+        usage: data.usage || null,
+        wasStreamed: false
       };
     }
 
@@ -346,6 +422,7 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
               if (toolCallsMap.size === 0 && finishReason !== 'tool_calls') {
                 if (!isStreaming) {
                   isStreaming = true;
+                  wasStreamed = true;
                   this.postMessage({ type: 'streamStart' });
                 }
                 this.postMessage({ type: 'stream', text: delta.content });
@@ -376,7 +453,8 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
       content,
       toolCalls: [...toolCallsMap.values()],
       finishReason,
-      usage
+      usage,
+      wasStreamed
     };
   }
 
@@ -389,6 +467,26 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
     if (searches > 0) parts.push(`Searches: ${searches}`);
     if (commands > 0) parts.push(`Commands run: ${commands}`);
     return parts.join(' | ') + '\n';
+  }
+
+  private buildFestiveSummary(iteration: number, toolsUsed: string[], filesRead: Set<string>, filesModified: Set<string>): string {
+    const searches = toolsUsed.filter(t => t === 'web_search' || t === 'search_files').length;
+    const commands = toolsUsed.filter(t => t === 'run_terminal').length;
+    const reads = toolsUsed.filter(t => t === 'read_file').length;
+    const edits = toolsUsed.filter(t => t === 'edit_file' || t === 'write_file').length;
+
+    let html = '<div class="festive-summary">';
+    html += '<div class="festive-header">🎉🏆 <b>Task Complete!</b> 🏆🎉</div>';
+    html += '<div class="festive-stats">';
+    html += `<div class="stat">⚡ <b>${iteration}</b> steps executed</div>`;
+    html += `<div class="stat">📖 <b>${reads}</b> files read · 📁 <b>${filesRead.size}</b> unique</div>`;
+    html += `<div class="stat">✏️ <b>${edits}</b> edits made · 📝 <b>${filesModified.size}</b> files modified</div>`;
+    if (commands > 0) html += `<div class="stat">🖥️ <b>${commands}</b> commands run</div>`;
+    if (searches > 0) html += `<div class="stat">🔍 <b>${searches}</b> searches performed</div>`;
+    html += '</div>';
+    html += '<div class="festive-footer">🚀✨ <i>Excellent work! Ready for the next challenge.</i> ✨🚀</div>';
+    html += '</div>';
+    return html;
   }
 
   private friendlyToolName(name: string): string {
@@ -476,6 +574,26 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
         await vscode.workspace.getConfiguration('mimo').update('preferredModel', message.model, vscode.ConfigurationTarget.Workspace);
         this.postMessage({ type: 'stream', text: `*Model set to ${message.model}*\n` });
         break;
+      case 'fetchModels': {
+        const models = await fetchModelsFromApi();
+        const options = getModelOptions();
+        this.postMessage({ type: 'modelsLoaded', models: options });
+        break;
+      }
+      case 'attachImage': {
+        // Store image data in conversation history for multimodal models
+        if (message.dataUrl) {
+          this.conversationHistory.push({
+            role: 'user',
+            content: message.caption || '[Image pasted from clipboard]'
+          });
+          // Store image reference for next API call
+          this._pendingImages = this._pendingImages || [];
+          this._pendingImages.push(message.dataUrl);
+          this.postMessage({ type: 'imageAttached', preview: message.dataUrl.substring(0, 80) });
+        }
+        break;
+      }
       case 'pickFile': {
         const fileUris = await vscode.window.showOpenDialog({
           canSelectMany: true, openLabel: 'Add as context',

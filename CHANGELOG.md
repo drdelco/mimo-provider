@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.9.6 (2026-05-02)
+
+### Fix: DeepSeek web search compatibility
+
+- Xiaomi's `builtin_function` format (`$web_search`) is not compatible with DeepSeek's OpenAI-compatible API — it caused a 400 error (`missing field 'type'`). Now `WEB_SEARCH_TOOL` is only sent to MiMo models; DeepSeek uses the standard `LOCAL_WEB_TOOLS` (DuckDuckGo) instead.
+- Thinking parameter is now also skipped for DeepSeek in the Copilot Chat participant (`chat.ts`), matching the webview behavior.
+
+## 0.9.5 (2026-05-02)
+
+### Fix: DeepSeek base URL
+
+- The default `deepseekBaseUrl` was missing the `/v1` path segment, causing the `/models` endpoint to hit `https://api.deepseek.com/models` (404) instead of `https://api.deepseek.com/v1/models`. DeepSeek models now appear correctly in the selector.
+
+## 0.9.4 (2026-05-02)
+
+### Multi-provider support (DeepSeek)
+
+- New settings: `mimo.deepseekApiKey` and `mimo.deepseekBaseUrl` (defaults to `https://api.deepseek.com/v1`).
+- Models from both providers (MiMo + DeepSeek) are fetched in parallel at startup and merged into a single model selector.
+- Routing is automatic: models prefixed with `deepseek-` are sent to the DeepSeek endpoint; everything else goes to MiMo.
+- DeepSeek's `reasoning_content` field is captured during SSE streaming and displayed as thinking output.
+- Thinking parameter is skipped for DeepSeek models (they handle reasoning internally).
+
+## 0.9.3 (2026-05-02)
+
+### Fix: Duplicate messages
+
+- When SSE streaming sent tokens to the UI, the final response content was re-sent after tool calls completed, causing duplicated text. Added `wasStreamed` flag to `parseSSEResponse` — skips re-sending content that was already streamed token-by-token.
+
+### Fix: Image thumbnails not cleared
+
+- After pending images were consumed by the API, the thumbnail previews remained visible in the chat input. Now sends a `clearImages` message to the webview, which removes all `.image-preview` elements from the attached files area.
+
+### Fix: Images ignored when model lacks vision
+
+- If the active model doesn't support vision and images are attached, the extension now auto-switches to the first available vision-capable model for that request. If no vision model exists at all, images are cleared and the user is informed.
+
+## 0.9.2 (2026-05-02)
+
+### Fix: Marketplace activation error
+
+- Removed `"isDefault": true` from the chat participant declaration. That property required the privileged `defaultChatParticipant` API proposal (reserved by VS Code for GitHub Copilot), which caused the runtime error `Extension 'drdelco.mimo-provider' CANNOT use API proposal: defaultChatParticipant` on activation.
+- The participant keeps working via `@MiMo` mention in the native chat.
+
+### Waiting animation
+
+- Animated "MiMo is thinking…" indicator with pulsing dots while the model processes. Starts on message send, stops when the response arrives.
+
+### Smart scroll
+
+- The chat no longer forces the view back to the bottom when new tokens arrive if the user has scrolled up to read previous output. Auto-scroll only kicks in when the user is already near the end (80px threshold).
+
+### Festive iteration summary
+
+- Every 10 agent iterations, a special status message is rendered with stats: tools used, files read, files modified, and elapsed time.
+
+### Image paste from clipboard
+
+- `Ctrl+V` with an image on the clipboard (e.g. a screenshot) attaches it directly to the chat. A removable preview is shown before sending.
+
+### Dynamic model selector with vision auto-switch
+
+- The model dropdown is now loaded dynamically from the Xiaomi API (`GET /models`). Capabilities (vision, thinking) are inferred from the model ID/name.
+- When an image is attached, the active model auto-switches to its vision-capable variant (e.g. `MiMo-V2-Flash` → `MiMo-V2-Flash-V`).
+
+### Auto-retry with fallback model
+
+- If the primary model fails, the request is automatically retried with an alternative model before surfacing the error to the user.
+
+## 0.9.1 (2026-04-21)
+
+### Pre-flight checks
+
+- New "Pre-flight Checks" section in the system prompt with 9 rules derived from real-world failure modes:
+  1. Cross-project copy-paste — never assume Firestore paths, custom claims, or env vars match across sibling projects.
+  2. SPA + hosting routing — read `rewrites` before adding links.
+  3. Deploy target disambiguation — distinguish Functions v1 (CommonJS) vs v2 (TS); avoid editing dead codebases.
+  4. Avoid hardcoded large data — no inline >5KB strings; import from canonical source.
+  5. No duplicate exports — search before exporting to prevent silent shadowing.
+  6. End-to-end verification — simulate the user's click before claiming "done".
+  7. Always run build — finish TS tasks with a build + report.
+  8. Respect existing patterns — don't create parallel systems.
+  9. Surgical edits in giant files — prefer `edit_file` over Python/sed scripts.
+
+### Web rules consolidation
+
+- Merged duplicate URL/web instructions between "Web Search" and "Rules" sections into a single bullet under Rules.
+- Compacted the "Web Search" section to the essentials (tools + workflow).
+
 ## 0.9.0 (2026-04-14)
 
 ### Streaming responses

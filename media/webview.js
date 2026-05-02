@@ -21,11 +21,69 @@
   let sessionMessages = 0;
   let currentAssistantDiv = null;
 
-  // ---- Helpers ----
+  // ---- Feature 2: Smart scroll ----
+  // Track whether the user is scrolled to bottom (auto-scroll) or has scrolled up (reading)
+  let userScrolledUp = false;
+  const SCROLL_THRESHOLD = 80; // px from bottom to consider "at bottom"
+
+  function isNearBottom() {
+    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < SCROLL_THRESHOLD;
+  }
 
   function scrollToBottom() {
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (!userScrolledUp) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
   }
+
+  // Listen for user scroll — if they scroll up, pause auto-scroll
+  messagesEl.addEventListener("scroll", function () {
+    userScrolledUp = !isNearBottom();
+  });
+
+  // ---- Feature 1: Animated waiting text ----
+  let waitingInterval = null;
+  let waitingEl = null;
+  const WAITING_PHRASES = [
+    "Waiting for MiMo...",
+    "Looking for the answer...",
+    "Thinking through the problem...",
+    "Analyzing the codebase...",
+    "Exploring possibilities...",
+    "Crunching the data...",
+    "Connecting the dots...",
+    "Processing your request..."
+  ];
+  let waitingPhraseIndex = 0;
+
+  function startWaitingAnimation() {
+    stopWaitingAnimation();
+    waitingEl = document.createElement("div");
+    waitingEl.className = "message tool-msg waiting-indicator";
+    waitingEl.innerHTML = '<span class="waiting-dots"></span> ' + WAITING_PHRASES[0];
+    messagesEl.appendChild(waitingEl);
+    scrollToBottom();
+    waitingPhraseIndex = 0;
+    waitingInterval = setInterval(function () {
+      waitingPhraseIndex = (waitingPhraseIndex + 1) % WAITING_PHRASES.length;
+      if (waitingEl) {
+        waitingEl.innerHTML = '<span class="waiting-dots"></span> ' + WAITING_PHRASES[waitingPhraseIndex];
+      }
+    }, 2500);
+  }
+
+  function stopWaitingAnimation() {
+    if (waitingInterval) {
+      clearInterval(waitingInterval);
+      waitingInterval = null;
+    }
+    if (waitingEl) {
+      waitingEl.remove();
+      waitingEl = null;
+    }
+  }
+
+  // ---- Helpers ----
 
   function addMessage(html, className) {
     const div = document.createElement("div");
@@ -51,25 +109,18 @@
   var HL_TYPES = /\b([A-Z][a-zA-Z0-9_]*)\b/g;
 
   function highlightCode(code) {
-    // Order matters: protect strings/comments first, then highlight the rest
     var placeholders = [];
     function protect(match) {
       placeholders.push(match);
       return "\x00PH" + (placeholders.length - 1) + "\x00";
     }
-
-    // Protect strings and comments from keyword highlighting
     var s = code;
     s = s.replace(HL_COMMENTS_BLOCK, function(m) { return protect('<span class="hl-comment">' + m + '</span>'); });
     s = s.replace(HL_COMMENTS_LINE, function(m) { return protect('<span class="hl-comment">' + m + '</span>'); });
     s = s.replace(HL_STRINGS, function(m) { return protect('<span class="hl-string">' + m + '</span>'); });
-
-    // Highlight keywords, numbers, types
     s = s.replace(HL_KEYWORDS, '<span class="hl-keyword">$1</span>');
     s = s.replace(HL_NUMBERS, '<span class="hl-number">$1</span>');
     s = s.replace(HL_TYPES, '<span class="hl-type">$1</span>');
-
-    // Restore protected segments
     s = s.replace(/\x00PH(\d+)\x00/g, function(_, i) { return placeholders[parseInt(i)]; });
     return s;
   }
@@ -82,12 +133,47 @@
       })
       .replace(/`([^`]+)`/g, "<code>$1</code>")
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/~~([^~]+)~~/g, "<del>$1</del>")
       .replace(/\n/g, "<br>");
   }
 
   function extractCode(text) {
     var match = text.match(/```\w*\n([\s\S]*?)\n```/);
     return match ? match[1] : null;
+  }
+
+  // ---- Feature 5: Paste image from clipboard ----
+  inputEl.addEventListener("paste", function (e) {
+    var items = (e.clipboardData || {}).items;
+    if (!items) return;
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (item.type.indexOf("image") === 0) {
+        e.preventDefault();
+        var blob = item.getAsFile();
+        var reader = new FileReader();
+        reader.onload = function (ev) {
+          var dataUrl = ev.target.result;
+          // Show preview in attached files area
+          showImagePreview(dataUrl);
+          // Send to extension host
+          vscode.postMessage({ type: "attachImage", dataUrl: dataUrl, caption: "[Screenshot pasted from clipboard]" });
+        };
+        reader.readAsDataURL(blob);
+        break;
+      }
+    }
+  });
+
+  function showImagePreview(dataUrl) {
+    var preview = document.createElement("div");
+    preview.className = "image-preview";
+    preview.innerHTML = '<img src="' + dataUrl + '" alt="Pasted screenshot"><button class="remove-img" title="Remove">&times;</button>';
+    preview.querySelector(".remove-img").addEventListener("click", function () {
+      preview.remove();
+    });
+    attachedFilesEl.appendChild(preview);
   }
 
   // ---- Send message ----
@@ -156,7 +242,12 @@
   // ---- Attached files ----
 
   function renderAttachedFiles() {
+    // Keep image previews, only rebuild file chips
+    var previews = attachedFilesEl.querySelectorAll(".image-preview");
     attachedFilesEl.innerHTML = "";
+    // Re-add image previews
+    previews.forEach(function (p) { attachedFilesEl.appendChild(p); });
+    // Add file chips
     attachedFiles.forEach(function (f, i) {
       var chip = document.createElement("span");
       chip.className = "attached-file";
@@ -223,6 +314,7 @@
   stopBtn.addEventListener("click", function () {
     vscode.postMessage({ type: "stopProcessing" });
     stopBtn.style.display = "none";
+    stopWaitingAnimation();
     addMessage("Stopped by user.", "assistant-msg");
   });
 
@@ -239,12 +331,14 @@
     });
   }
 
-  // Model selector
+  // Model selector — request models from extension on init
   var modelSelect = document.getElementById("modelSelect");
   if (modelSelect) {
     modelSelect.addEventListener("change", function () {
       vscode.postMessage({ type: "setModel", model: modelSelect.value });
     });
+    // Request dynamic model list from extension host
+    vscode.postMessage({ type: "fetchModels" });
   }
 
   // Export chat
@@ -276,12 +370,10 @@
     var msg = e.data;
     switch (msg.type) {
       case "init":
-        // Save tabId so VS Code can restore this panel after restart
         vscode.setState({ tabId: msg.tabId });
         break;
 
       case "restored":
-        // Tab was restored — render previous conversation
         var welcome = document.getElementById("welcome");
         if (welcome) welcome.style.display = "none";
         if (msg.messages && msg.messages.length > 0) {
@@ -305,23 +397,18 @@
       case "startStreaming":
         currentAssistantDiv = null;
         stopBtn.style.display = "flex";
+        startWaitingAnimation();
         break;
 
       case "step":
-        // Visible step indicator — always at the bottom, always visible
-        var stepEl = document.getElementById("stepIndicator");
-        if (stepEl) stepEl.remove();
-        stepEl = document.createElement("div");
-        stepEl.id = "stepIndicator";
-        stepEl.className = "message tool-msg";
-        stepEl.style.borderLeftColor = "var(--vscode-charts-yellow)";
-        stepEl.textContent = msg.text;
-        messagesEl.appendChild(stepEl);
-        scrollToBottom();
+        // Visible step indicator — update waiting animation text
+        if (waitingEl) {
+          waitingEl.innerHTML = '<span class="waiting-dots"></span> ' + msg.text;
+        }
         break;
 
       case "assistantMessage":
-        // Always create a NEW div at the END — after all tool activity
+        stopWaitingAnimation();
         currentAssistantDiv = addMessage(renderMarkdown(msg.text), "assistant-msg");
         var code = extractCode(msg.text);
         if (code) {
@@ -335,13 +422,13 @@
         break;
 
       case "streamStart":
-        // New streaming response — create a fresh assistant div
+        stopWaitingAnimation();
         currentAssistantDiv = addMessage("", "assistant-msg");
         break;
 
       case "stream":
+        stopWaitingAnimation();
         if (currentAssistantDiv) {
-          // For SSE streaming, append raw text then re-render
           if (!currentAssistantDiv._rawText) currentAssistantDiv._rawText = "";
           currentAssistantDiv._rawText += msg.text;
           currentAssistantDiv.innerHTML = renderMarkdown(currentAssistantDiv._rawText);
@@ -353,7 +440,6 @@
         break;
 
       case "assistantDone":
-        // Streaming finished — add insert button if code block present
         if (currentAssistantDiv && currentAssistantDiv._rawText) {
           var code = extractCode(currentAssistantDiv._rawText);
           if (code) {
@@ -368,6 +454,7 @@
         break;
 
       case "toolCall":
+        stopWaitingAnimation();
         addMessage(escapeHtml(msg.args), "tool-msg");
         break;
 
@@ -376,6 +463,7 @@
         break;
 
       case "error":
+        stopWaitingAnimation();
         addMessage(escapeHtml(msg.text), "error-msg");
         break;
 
@@ -384,6 +472,7 @@
         break;
 
       case "streamEnd":
+        stopWaitingAnimation();
         currentAssistantDiv = null;
         stopBtn.style.display = "none";
         var cleanEl = document.getElementById("stepIndicator");
@@ -394,6 +483,42 @@
       case "historyCleared":
         totalTokensUsed = 0;
         sessionMessages = 0;
+        break;
+
+      // Feature 3: Dynamic model list from API
+      case "modelsLoaded":
+        if (modelSelect && msg.models && msg.models.length > 0) {
+          var currentVal = modelSelect.value;
+          modelSelect.innerHTML = '<option value="auto">Auto</option>';
+          msg.models.forEach(function (m) {
+            var opt = document.createElement("option");
+            opt.value = m.value;
+            opt.textContent = m.label;
+            modelSelect.appendChild(opt);
+          });
+          // Restore selection if still valid
+          if (currentVal) modelSelect.value = currentVal;
+        }
+        break;
+
+      // Feature 5: Image attached confirmation
+      case "imageAttached":
+        // Preview already shown via paste handler
+        break;
+
+      // Clear image thumbnails after they've been consumed by the API
+      case "clearImages":
+        var previews = attachedFilesEl.querySelectorAll(".image-preview");
+        previews.forEach(function (p) { p.remove(); });
+        break;
+
+      // Feature 6: Festive summary for long tasks
+      case "festiveSummary":
+        var festDiv = document.createElement("div");
+        festDiv.className = "message festive-msg";
+        festDiv.innerHTML = msg.html;
+        messagesEl.appendChild(festDiv);
+        scrollToBottom();
         break;
     }
   });

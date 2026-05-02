@@ -338,3 +338,109 @@ code {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
 }
+
+/* ---- Feature 1: Animated waiting indicator ---- */
+.waiting-indicator {
+  border-left-color: var(--vscode-charts-yellow) !important;
+  animation: waitingPulse 2s ease-in-out infinite;
+}
+
+.waiting-dots::after {
+  content: '';
+  animation: waitingDots 1.5s steps(4, end) infinite;
+}
+
+@keyframes waitingPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+@keyframes waitingDots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+
+/* ---- Feature 5: Image preview ---- */
+.image-preview {
+  position: relative;
+  display: inline-block;
+  margin: 4px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.image-preview img {
+  max-width: 200px;
+  max-height: 120px;
+  display: block;
+  border-radius: 4px;
+}
+
+.image-preview .remove-img {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--vscode-inputValidation-errorForeground);
+  border: none;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.image-preview:hover .remove-img { opacity: 1; }
+
+/* ---- Feature 6: Festive summary ---- */
+.festive-msg {
+  background: linear-gradient(135deg, var(--vscode-editorWidget-background), var(--vscode-textCodeBlock-background));
+  border: 1px solid var(--vscode-charts-green);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin: 8px 0;
+  animation: festiveAppear 0.5s ease-out;
+}
+
+@keyframes festiveAppear {
+  0% { opacity: 0; transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.festive-header {
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 12px;
+  color: var(--vscode-charts-green);
+}
+
+.festive-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.festive-stats .stat {
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.festive-footer {
+  text-align: center;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--vscode-descriptionForeground);
+}

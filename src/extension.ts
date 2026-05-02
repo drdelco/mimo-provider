@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { MiMoProvider } from './provider';
+import { MiMoProvider, fetchModelsFromApi } from './provider';
 import { MiMoChatParticipant } from './chat';
 import { MiMoChatViewProvider } from './webview';
 
@@ -7,6 +7,12 @@ const panels = new Map<number, { panel: vscode.WebviewPanel; provider: MiMoChatV
 
 export function activate(context: vscode.ExtensionContext) {
   let panelCounter = 0;
+
+  // Fetch available models from API on activation
+  fetchModelsFromApi().then(models => {
+    console.log(`MiMo: ${models.length} models loaded on activation`);
+  });
+
   // Register the model provider
   const provider = new MiMoProvider();
   context.subscriptions.push(
