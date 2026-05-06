@@ -275,10 +275,24 @@
         statCost.textContent = '$' + (msg.totalCost || 0).toFixed(4);
         stopElapsed();
 
-        const reportPhase = addPhase('Final report');
-        const report = el('div', { cls: 'agent-output' });
-        report.textContent = msg.finalOutput || '(no report)';
+        addPhase('Final report');
+        var reportText = msg.finalOutput || '(no report)';
+        var report = el('div', { cls: 'final-report collapsed' });
+        report.textContent = reportText;
         main.appendChild(report);
+
+        var toggle = el('button', { cls: 'final-report-toggle', text: 'Show full report' });
+        toggle.addEventListener('click', function () {
+          if (report.classList.contains('collapsed')) {
+            report.classList.remove('collapsed');
+            toggle.textContent = 'Collapse';
+          } else {
+            report.classList.add('collapsed');
+            toggle.textContent = 'Show full report';
+          }
+        });
+        main.appendChild(toggle);
+        main.scrollTop = main.scrollHeight;
         break;
 
       case 'budget-warning':

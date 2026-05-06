@@ -238,8 +238,32 @@ export function activate(context: vscode.ExtensionContext) {
       const autoFallback = orchestraConfig.get<boolean>('autoFallback') ?? true;
       const skipSecurityReview = orchestraConfig.get<boolean>('skipSecurityReview') ?? false;
 
+      // Pick a sandbox directory so agents do not pollute the active workspace.
+      // Default: <workspace>/.orchestra-runs/<timestamp-slug>/
+      // User can override via input box.
+      const fs = require('fs') as typeof import('fs');
+      const path = require('path') as typeof import('path');
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+      const slug = request.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 30);
+      const defaultSandbox = path.join(workspaceRoot, '.orchestra-runs', `${ts}-${slug}`);
+
+      const sandboxChoice = await vscode.window.showInputBox({
+        prompt: 'Where should the agents write their output? (Empty = default sandbox)',
+        value: defaultSandbox,
+        valueSelection: [0, defaultSandbox.length]
+      });
+      if (sandboxChoice === undefined) return; // user cancelled
+
+      const sandboxRoot = sandboxChoice.trim() || defaultSandbox;
+      try {
+        fs.mkdirSync(sandboxRoot, { recursive: true });
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Cannot create sandbox at ${sandboxRoot}: ${err.message}`);
+        return;
+      }
+
       const pool = new AgentPool(poolLimits);
-      const director = new CodingDirector(workspaceRoot, budget, pool, { autoFallback, skipSecurityReview });
+      const director = new CodingDirector(sandboxRoot, budget, pool, { autoFallback, skipSecurityReview });
 
       // Stream live events to the sidebar view
       orchestraView.reveal();
@@ -342,6 +366,7 @@ function renderResultHtml(result: OrchestrationResult): string {
   summary { cursor: pointer; color: #858585; font-size: 11px; }
 </style></head><body>
   <h1>🎼 MiMonster Orchestra Result</h1>
+  <p><small>Sandbox: <code>${escape(result.sandboxRoot)}</code></small></p>
   <div class="stats">
     <div class="stat"><div class="stat-label">Cost</div><div class="stat-value">$${result.totalCost.toFixed(4)}</div></div>
     <div class="stat"><div class="stat-label">Tokens</div><div class="stat-value">${result.totalTokens.toLocaleString()}</div></div>

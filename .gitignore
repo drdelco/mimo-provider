@@ -3,3 +3,8 @@ out/
 *.vsix
 *.txt
 .icon-font-svgs/
+
+# Orchestra sandbox runs (each agent execution writes here)
+.orchestra-runs/
+.orchestra-context.md
+.orchestra-mailbox.json

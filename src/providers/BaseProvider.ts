@@ -54,6 +54,8 @@ export interface ToolDefinition {
 
 export interface ToolCall {
   id: string;
+  /** Streaming index — present on streamed deltas so we can group fragments of the same call */
+  index?: number;
   function: {
     name: string;
     arguments: string;

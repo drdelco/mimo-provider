@@ -158,6 +158,7 @@ export class MiMoProvider implements AICodingProvider, vscode.LanguageModelChatP
               done: false,
               toolCalls: delta.tool_calls.map((tc: any) => ({
                 id: tc.id || '',
+                index: typeof tc.index === 'number' ? tc.index : undefined,
                 function: {
                   name: tc.function?.name || '',
                   arguments: tc.function?.arguments || ''

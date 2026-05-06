@@ -11,7 +11,7 @@
  */
 
 import { AICodingProvider, ChatMessage, ChatChunk, ToolCall } from '../providers/BaseProvider';
-import { TOOLS, executeTool } from '../tools';
+import { TOOLS, executeTool, setWorkspaceRootOverride } from '../tools';
 import {
   ORCHESTRA_TOOLS,
   OrchestraToolContext,
@@ -29,6 +29,11 @@ export interface AgentExecutionOptions {
   onProgress?: (event: AgentEvent) => void;
   /** Orchestra context — if provided, ask_agent / notify / broadcast / check_inbox become available */
   orchestraContext?: OrchestraToolContext;
+  /**
+   * Sandbox directory the agent's filesystem tools will resolve relative paths against.
+   * If unset, agents write into the active VS Code workspace (same as single-agent chat).
+   */
+  workspaceRoot?: string;
 }
 
 export type AgentEvent =
@@ -94,15 +99,18 @@ export class AgentExecutor {
           }
           if (chunk.toolCalls) {
             for (const tc of chunk.toolCalls) {
-              // Aggregate by index — streaming sends partial deltas
-              const idx = turnToolCalls.size;
-              const existing = [...turnToolCalls.values()].find(e => e.id === tc.id);
+              // Streaming deltas: only the FIRST chunk for a given call carries id+name.
+              // Subsequent chunks carry only `index` and a fragment of `arguments`.
+              // We must group by index (canonical), with id as a fallback.
+              const key = typeof tc.index === 'number' ? tc.index : (tc.id ? `id:${tc.id}` : turnToolCalls.size);
+              const existing = turnToolCalls.get(key as number);
               if (existing) {
-                existing.function.name += tc.function.name || '';
-                existing.function.arguments += tc.function.arguments || '';
+                if (tc.id && !existing.id) existing.id = tc.id;
+                if (tc.function.name) existing.function.name += tc.function.name;
+                if (tc.function.arguments) existing.function.arguments += tc.function.arguments;
               } else {
-                turnToolCalls.set(idx, {
-                  id: tc.id,
+                turnToolCalls.set(key as number, {
+                  id: tc.id || '',
                   function: {
                     name: tc.function.name || '',
                     arguments: tc.function.arguments || ''
@@ -163,7 +171,13 @@ export class AgentExecutor {
                 setOrchestraContext(undefined);
               }
             } else {
-              result = await executeTool(tc);
+              // Sandbox the agent's filesystem operations to opts.workspaceRoot if set
+              if (opts.workspaceRoot) setWorkspaceRootOverride(opts.workspaceRoot);
+              try {
+                result = await executeTool(tc);
+              } finally {
+                if (opts.workspaceRoot) setWorkspaceRootOverride(undefined);
+              }
             }
           } catch (err: any) {
             result = `Tool error: ${err.message}`;

@@ -50,6 +50,7 @@ export interface OrchestrationResult {
   mailboxStats: ReturnType<AgentMailbox['stats']>;
   conversationLog: AgentMessage[];
   memoryStats: ReturnType<VectorMemory['stats']>;
+  sandboxRoot: string;
 }
 
 export interface SecurityReviewResult {
@@ -180,18 +181,26 @@ export class CodingDirector {
 
   private autoFallback: boolean;
 
+  /**
+   * Sandbox directory where every agent's filesystem operations resolve to.
+   * Also where Mailbox/Context persistence files live. This is what keeps the
+   * user's main workspace clean.
+   */
+  private sandboxRoot: string;
+
   constructor(
-    workspaceRoot: string,
+    sandboxRoot: string,
     budgetLimit: number = 5.0,
     pool?: AgentPool,
     options: { skipSecurityReview?: boolean; autoFallback?: boolean } = {}
   ) {
+    this.sandboxRoot = sandboxRoot;
     this.factory = new ProviderFactory();
     this.router = new TaskRouter();
-    this.memory = new SharedMemory(workspaceRoot);
+    this.memory = new SharedMemory(sandboxRoot);
     this.executor = new AgentExecutor();
     this.pool = pool ?? new AgentPool();
-    this.mailbox = new AgentMailbox(workspaceRoot);
+    this.mailbox = new AgentMailbox(sandboxRoot);
     this.vectorMemory = new VectorMemory();
     this.budgetLimit = budgetLimit;
     this.skipSecurityReview = options.skipSecurityReview ?? false;
@@ -224,6 +233,7 @@ export class CodingDirector {
   getBudgetLimit(): number { return this.budgetLimit; }
   getMailbox(): AgentMailbox { return this.mailbox; }
   getVectorMemory(): VectorMemory { return this.vectorMemory; }
+  getSandboxRoot(): string { return this.sandboxRoot; }
 
   async execute(
     request: string,
@@ -274,7 +284,8 @@ export class CodingDirector {
       poolUsage: this.pool.getAllUsage(),
       mailboxStats: this.mailbox.stats(),
       conversationLog: this.mailbox.history(),
-      memoryStats: this.vectorMemory.stats()
+      memoryStats: this.vectorMemory.stats(),
+      sandboxRoot: this.sandboxRoot
     };
   }
 
@@ -486,6 +497,7 @@ When you finish, end with a brief summary covering each acceptance criterion.`;
           systemPrompt,
           userTask: `Execute Work Order ${wo.id}: ${wo.title}\n\n${wo.description}`,
           maxIterations: 40,
+          workspaceRoot: this.sandboxRoot,
           orchestraContext: {
             mailbox: this.mailbox,
             agentId: instance.id,
@@ -659,6 +671,7 @@ Read each modified file and produce the JSON audit report.`;
         systemPrompt,
         userTask,
         maxIterations: 30,
+        workspaceRoot: this.sandboxRoot,
         orchestraContext: {
           mailbox: this.mailbox,
           agentId: instance.id,

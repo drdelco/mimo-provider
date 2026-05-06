@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1 (2026-05-06)
+
+### Fixes
+
+- **Orchestra sandbox**: agents no longer pollute the active workspace. Each `Orchestra: Execute Complex Task` run now creates a unique `.orchestra-runs/<timestamp>-<slug>/` folder; all agent file output, mailbox persistence, and context files are written inside it. Users can override the sandbox path via input box at the start of each run.
+- **Orchestra UI**: Final Report no longer trapped in a 250px scroll box. Now expandable with "Show full report" / "Collapse" toggle and a fade gradient to indicate truncation.
+- **Tool call streaming aggregation** (root cause of MiniMax 400 errors and some MiMo / DeepSeek failures): the executor was creating duplicate tool_call entries when streaming deltas arrived without an `id` field. Fixed to group fragments by streaming `index` (canonical OpenAI streaming convention), with `id` as fallback. Tool arguments now reassemble correctly across all 4 orchestra providers (MiMo, Kimi, DeepSeek, MiniMax).
+- `.orchestra-runs/`, `.orchestra-context.md`, and `.orchestra-mailbox.json` are now gitignored.
+
 ## 1.2.0 (2026-05-06) — MiMonster Orchestra rebrand + multi-agent
 
 **Major rebrand**: extension renamed from "MiMo by Xiaomi" to **"MiMonster Orchestra"**.

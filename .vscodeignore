@@ -12,3 +12,8 @@ test-*
 BRIEFING.md
 CLAUDE.md
 kimi-install.sh
+.orchestra-runs/**
+.orchestra-context.md
+.orchestra-mailbox.json
+backup-orchestra-pre-merge
+*.vsix

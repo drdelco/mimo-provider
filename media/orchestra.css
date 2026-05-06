@@ -163,6 +163,43 @@ body {
   overflow-y: auto;
 }
 
+.final-report {
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: var(--vscode-textCodeBlock-background);
+  border-left: 3px solid var(--vscode-charts-green);
+  border-radius: 3px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  line-height: 1.5;
+}
+.final-report.collapsed {
+  max-height: 200px;
+  overflow: hidden;
+  position: relative;
+}
+.final-report.collapsed::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 60px;
+  background: linear-gradient(to bottom, transparent, var(--vscode-textCodeBlock-background));
+}
+.final-report-toggle {
+  margin-top: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.final-report-toggle:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
 /* Mailbox messages */
 .mail {
   font-size: 11px;

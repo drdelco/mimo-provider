@@ -235,8 +235,21 @@ export const LOCAL_WEB_TOOLS: ToolDefinition[] = [
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Override the working directory used by tools. Set by orchestra agents
+ * so their file output goes to a sandbox folder, not the user's main workspace.
+ * Cleared after each tool call.
+ */
+let workspaceRootOverride: string | undefined;
+
+export function setWorkspaceRootOverride(root: string | undefined): void {
+  workspaceRootOverride = root;
+}
+
 function getWorkspaceRoot(): string {
-  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+  return workspaceRootOverride
+    || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+    || process.cwd();
 }
 
 function resolvePath(filePath: string): string {
