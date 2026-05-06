@@ -11,6 +11,7 @@ import { ClaudeProvider } from './providers/ClaudeProvider';
 import { ProviderFactory } from './providers/BaseProvider';
 import { CodingDirector } from './orchestra/Director';
 import { AgentPool, DEFAULT_LIMITS } from './orchestra/AgentPool';
+import { OrchestraViewProvider } from './orchestra/OrchestraView';
 import { MiMoChatParticipant } from './chat';
 import { MiMoChatViewProvider } from './webview';
 
@@ -35,10 +36,18 @@ export function activate(context: vscode.ExtensionContext) {
   const chat = new MiMoChatParticipant();
   context.subscriptions.push(chat.register(context));
 
-  // Register the sidebar webview (fallback)
+  // Register the sidebar webview (chat fallback)
   const chatViewProvider = new MiMoChatViewProvider(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('mimo.chatView', chatViewProvider, {
+      webviewOptions: { retainContextWhenHidden: true }
+    })
+  );
+
+  // Register the Orchestra sidebar view (live multi-agent activity)
+  const orchestraView = new OrchestraViewProvider(context.extensionUri);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider('mimo.orchestraView', orchestraView, {
       webviewOptions: { retainContextWhenHidden: true }
     })
   );
@@ -106,7 +115,13 @@ export function activate(context: vscode.ExtensionContext) {
       const poolLimits = orchestraConfig.get<Record<string, number>>('poolLimits') ?? DEFAULT_LIMITS;
       const budget = orchestraConfig.get<number>('budgetLimit') ?? 5.0;
       const pool = new AgentPool(poolLimits);
-      const director = new CodingDirector(workspaceRoot, budget, pool);
+      const autoFallback = orchestraConfig.get<boolean>('autoFallback') ?? true;
+      const director = new CodingDirector(workspaceRoot, budget, pool, { autoFallback });
+
+      // Wire live events to the Orchestra sidebar view
+      orchestraView.reveal();
+      orchestraView.reset();
+      director.setEventListener((event) => orchestraView.postEvent(event));
 
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -115,10 +130,13 @@ export function activate(context: vscode.ExtensionContext) {
       }, async (progress, token) => {
         try {
           const result = await director.execute(request, progress);
-          
-          // Show results in new panel
+
+          // Push final report to the live view
+          orchestraView.postFinal(result);
+
+          // Also open the detailed result panel
           showOrchestraResult(result);
-          
+
           vscode.window.showInformationMessage(
             `✅ Orchestra complete! Cost: $${result.totalCost.toFixed(2)}, Duration: ${(result.totalDuration / 1000).toFixed(1)}s`,
             'View Details'

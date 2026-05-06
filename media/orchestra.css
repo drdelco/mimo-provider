@@ -1,0 +1,243 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-titleBar-activeBackground);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.header h2 { font-size: 13px; font-weight: 600; flex: 1; }
+.header .stats {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.header .stats span { white-space: nowrap; }
+.header .stats strong { color: var(--vscode-foreground); }
+
+.toolbar {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.toolbar button {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.toolbar button:hover { background: var(--vscode-button-hoverBackground); }
+.toolbar button.secondary {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.idle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+}
+.idle h3 { font-size: 14px; font-weight: 600; color: var(--vscode-foreground); }
+.idle p { font-size: 12px; line-height: 1.5; max-width: 320px; }
+
+/* Agent card */
+.agent {
+  background: var(--vscode-editorWidget-background);
+  border-left: 3px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.agent.running   { border-left-color: var(--vscode-charts-blue); }
+.agent.thinking  { border-left-color: var(--vscode-charts-yellow); }
+.agent.tool      { border-left-color: var(--vscode-charts-purple); }
+.agent.done      { border-left-color: var(--vscode-charts-green); }
+.agent.failed    { border-left-color: var(--vscode-charts-red); }
+.agent.security  { border-left-color: var(--vscode-charts-orange); }
+
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.agent-id {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  color: var(--vscode-textLink-foreground);
+}
+.agent-status {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+.agent-title {
+  flex: 1;
+  font-weight: 500;
+}
+.agent-meta {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+.agent-iter {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.agent-body {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--vscode-panel-border);
+  font-size: 11px;
+  display: none;
+}
+.agent.expanded .agent-body { display: block; }
+
+.agent-events {
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+.event-line {
+  padding: 1px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.event-line.tool-call { color: var(--vscode-charts-purple); }
+.event-line.tool-result { color: var(--vscode-charts-green); }
+.event-line.text { color: var(--vscode-foreground); }
+.event-line.thinking { color: var(--vscode-charts-yellow); font-style: italic; }
+
+.agent-output {
+  margin-top: 6px;
+  padding: 6px;
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+/* Mailbox messages */
+.mail {
+  font-size: 11px;
+  padding: 6px 10px;
+  background: var(--vscode-input-background);
+  border-radius: 3px;
+  border-left: 2px solid var(--vscode-charts-blue);
+  margin: 4px 0;
+}
+.mail.question  { border-left-color: var(--vscode-charts-yellow); }
+.mail.answer    { border-left-color: var(--vscode-charts-green); }
+.mail.broadcast { border-left-color: var(--vscode-charts-purple); }
+.mail-head {
+  display: flex;
+  gap: 8px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+.mail-from { color: var(--vscode-textLink-foreground); }
+.mail-arrow { color: var(--vscode-descriptionForeground); }
+.mail-to { color: var(--vscode-charts-orange); }
+.mail-type {
+  font-size: 9px;
+  padding: 0 4px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  border-radius: 6px;
+}
+.mail-subject { font-weight: 500; margin-top: 2px; }
+.mail-body { margin-top: 4px; color: var(--vscode-foreground); white-space: pre-wrap; max-height: 100px; overflow: auto; }
+
+/* Phase header */
+.phase {
+  margin: 8px 0 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  background: var(--vscode-titleBar-inactiveBackground);
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Security review */
+.security-block {
+  background: var(--vscode-inputValidation-warningBackground, #5a4920);
+  border: 1px solid var(--vscode-charts-orange);
+  border-radius: 4px;
+  padding: 10px;
+  margin: 8px 0;
+}
+.security-block.approved {
+  background: rgba(78, 201, 176, 0.1);
+  border-color: var(--vscode-charts-green);
+}
+.security-issue {
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-left: 2px solid var(--vscode-charts-red);
+  font-size: 11px;
+}
+.security-issue.critical { border-left-color: var(--vscode-charts-red); }
+.security-issue.high     { border-left-color: var(--vscode-charts-orange); }
+.security-issue.medium   { border-left-color: var(--vscode-charts-yellow); }
+.security-issue.low      { border-left-color: var(--vscode-charts-blue); }
+.security-issue.info     { border-left-color: var(--vscode-descriptionForeground); }
+.severity-tag {
+  display: inline-block;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 6px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  text-transform: uppercase;
+}

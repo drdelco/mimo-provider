@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(npm run compile 2>&1)"
+      "PowerShell(npm run compile 2>&1)",
+      "PowerShell(git push 2>&1)"
     ]
   }
 }

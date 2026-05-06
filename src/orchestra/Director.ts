@@ -26,6 +26,7 @@ import { ClaudeProvider } from '../providers/ClaudeProvider';
 import { AgentExecutor, AgentEvent } from './AgentExecutor';
 import { AgentPool } from './AgentPool';
 import { AgentMailbox, AgentMessage } from './Mailbox';
+import { VectorMemory } from './VectorMemory';
 import {
   WorkOrder,
   WorkOrderResult,
@@ -47,6 +48,7 @@ export interface OrchestrationResult {
   poolUsage: Record<string, { inUse: number; limit: number; waiting: number }>;
   mailboxStats: ReturnType<AgentMailbox['stats']>;
   conversationLog: AgentMessage[];
+  memoryStats: ReturnType<VectorMemory['stats']>;
 }
 
 export interface SecurityReviewResult {
@@ -77,7 +79,8 @@ export type DirectorEvent =
   | { type: 'security-done'; approved: boolean; issueCount: number }
   | { type: 'synthesize-start' }
   | { type: 'synthesize-done' }
-  | { type: 'budget-warning'; used: number; limit: number };
+  | { type: 'budget-warning'; used: number; limit: number }
+  | { type: 'wo-fallback'; workOrderId: string; failedProvider: string; nextProvider: string; reason: string };
 
 export class TaskRouter {
   private agentRoles: Map<AgentRole, string[]> = new Map([
@@ -91,12 +94,25 @@ export class TaskRouter {
   ]);
 
   selectProvider(role: AgentRole, available: AICodingProvider[]): AICodingProvider | undefined {
+    return this.selectProviderChain(role, available)[0];
+  }
+
+  /**
+   * Returns the ordered list of providers to try for this role, available-only.
+   * Used by auto-fallback: if the first one fails, try the next.
+   */
+  selectProviderChain(role: AgentRole, available: AICodingProvider[]): AICodingProvider[] {
     const preferred = this.agentRoles.get(role) ?? [];
+    const chain: AICodingProvider[] = [];
     for (const name of preferred) {
       const p = available.find(x => x.name === name);
-      if (p) return p;
+      if (p) chain.push(p);
     }
-    return available[0];
+    // Append any other available providers as last-resort fallbacks
+    for (const p of available) {
+      if (!chain.includes(p)) chain.push(p);
+    }
+    return chain;
   }
 
   describe(role: AgentRole): string {
@@ -155,16 +171,19 @@ export class CodingDirector {
   private executor: AgentExecutor;
   private pool: AgentPool;
   private mailbox: AgentMailbox;
+  private vectorMemory: VectorMemory;
   private budgetLimit: number;
   private usedBudget = 0;
   private onEvent?: (e: DirectorEvent) => void;
   private skipSecurityReview: boolean;
 
+  private autoFallback: boolean;
+
   constructor(
     workspaceRoot: string,
     budgetLimit: number = 5.0,
     pool?: AgentPool,
-    options: { skipSecurityReview?: boolean } = {}
+    options: { skipSecurityReview?: boolean; autoFallback?: boolean } = {}
   ) {
     this.factory = new ProviderFactory();
     this.router = new TaskRouter();
@@ -172,16 +191,26 @@ export class CodingDirector {
     this.executor = new AgentExecutor();
     this.pool = pool ?? new AgentPool();
     this.mailbox = new AgentMailbox(workspaceRoot);
+    this.vectorMemory = new VectorMemory();
     this.budgetLimit = budgetLimit;
     this.skipSecurityReview = options.skipSecurityReview ?? false;
+    this.autoFallback = options.autoFallback ?? true;
 
     this.factory.register(new MiMoProvider());
     this.factory.register(new KimiProvider());
     this.factory.register(new DeepSeekProvider());
     this.factory.register(new ClaudeProvider());
 
-    // Pipe mailbox messages to event listener for the UI
-    this.mailbox.subscribe((msg) => this.emit({ type: 'mail', message: msg }));
+    // Pipe mailbox messages to event listener for the UI + vector memory
+    this.mailbox.subscribe((msg) => {
+      this.emit({ type: 'mail', message: msg });
+      this.vectorMemory.add({
+        id: `msg-${msg.id}`,
+        kind: 'message',
+        text: `${msg.subject}\n\n${msg.body}`,
+        metadata: { from: msg.from, to: msg.to, type: msg.type, workOrderId: msg.workOrderId }
+      });
+    });
   }
 
   setEventListener(handler: (e: DirectorEvent) => void): void {
@@ -192,6 +221,7 @@ export class CodingDirector {
   getUsedBudget(): number { return this.usedBudget; }
   getBudgetLimit(): number { return this.budgetLimit; }
   getMailbox(): AgentMailbox { return this.mailbox; }
+  getVectorMemory(): VectorMemory { return this.vectorMemory; }
 
   async execute(
     request: string,
@@ -241,7 +271,8 @@ export class CodingDirector {
       totalDuration: Date.now() - startTime,
       poolUsage: this.pool.getAllUsage(),
       mailboxStats: this.mailbox.stats(),
-      conversationLog: this.mailbox.history()
+      conversationLog: this.mailbox.history(),
+      memoryStats: this.vectorMemory.stats()
     };
   }
 
@@ -359,6 +390,17 @@ Respond ONLY with valid JSON, no markdown fences:
             throw new Error(`Budget exceeded: $${this.usedBudget.toFixed(2)} / $${this.budgetLimit}`);
           }
           this.memory.add(`workorder-${wo.id}`, wo.result.summary);
+          // Index the result so downstream agents can semantically retrieve it
+          this.vectorMemory.add({
+            id: `wo-${wo.id}`,
+            kind: 'workorder',
+            text: `${wo.title}\n${wo.description}\n${wo.result.finalText}`,
+            metadata: {
+              role: wo.role,
+              agentId: wo.assignedTo,
+              filesModified: wo.result.filesModified
+            }
+          });
         }
         completed.add(wo.id);
         remaining.delete(wo.id);
@@ -380,8 +422,8 @@ Respond ONLY with valid JSON, no markdown fences:
     wo.startedAt = startTime;
     wo.status = 'in-progress';
 
-    const provider = this.router.selectProvider(wo.role, available);
-    if (!provider) {
+    const chain = this.router.selectProviderChain(wo.role, available);
+    if (chain.length === 0) {
       wo.status = 'failed';
       wo.result = {
         filesCreated: [], filesModified: [], toolsUsed: [],
@@ -393,67 +435,142 @@ Respond ONLY with valid JSON, no markdown fences:
       return;
     }
 
-    const instance = await this.pool.acquire(provider, provider.models[0].id, wo.role);
-    wo.assignedTo = instance.id;
-    this.emit({
-      type: 'wo-start',
-      workOrderId: wo.id,
-      agentId: instance.id,
-      role: wo.role,
-      title: wo.title
-    });
+    // Determine how many providers to try: just the first one, or the whole chain
+    const providersToTry = this.autoFallback ? chain : chain.slice(0, 1);
+    let lastError: string | undefined;
+    let cumulativeCost = 0;
 
-    try {
-      const projectContext = this.memory.loadProjectContext();
-      const woSpec = renderWorkOrderForAgent(wo, priorResults);
-      const peers = peerIds.filter(id => id !== instance.id);
+    for (let attempt = 0; attempt < providersToTry.length; attempt++) {
+      const provider = providersToTry[attempt];
+      const instance = await this.pool.acquire(provider, provider.models[0].id, wo.role);
+      wo.assignedTo = instance.id;
 
-      const systemPrompt = `You are ${this.router.describe(wo.role)}.
+      this.emit({
+        type: 'wo-start',
+        workOrderId: wo.id,
+        agentId: instance.id,
+        role: wo.role,
+        title: wo.title
+      });
+
+      try {
+        const projectContext = this.memory.loadProjectContext();
+        const woSpec = renderWorkOrderForAgent(wo, priorResults);
+        const peers = peerIds.filter(id => id !== instance.id);
+
+        // Pull semantically relevant context from prior WOs and messages
+        const semanticQuery = `${wo.title}\n${wo.description}\n${wo.deliverables.join('\n')}`;
+        const semanticContext = this.vectorMemory.getRelevantContext(semanticQuery, 4, 2500);
+
+        const fallbackNote = attempt > 0
+          ? `\n\nNOTE: A previous attempt by ${providersToTry[attempt - 1].name} failed (${lastError}). You are taking over.`
+          : '';
+
+        const systemPrompt = `You are ${this.router.describe(wo.role)}.
 
 You are agent: ${instance.id}
-Other agents you can talk to via ask_agent / notify / broadcast: ${peers.join(', ') || '(none yet)'}
+Other agents you can talk to via ask_agent / notify / broadcast: ${peers.join(', ') || '(none yet)'}${fallbackNote}
 
 PROJECT CONTEXT:
 ${projectContext}
 
-${woSpec}
+${semanticContext ? semanticContext + '\n\n' : ''}${woSpec}
 
 When you finish, end with a brief summary covering each acceptance criterion.`;
 
-      const result = await this.executor.run({
-        provider,
-        modelId: instance.modelId,
-        systemPrompt,
-        userTask: `Execute Work Order ${wo.id}: ${wo.title}\n\n${wo.description}`,
-        maxIterations: 40,
-        orchestraContext: {
-          mailbox: this.mailbox,
-          agentId: instance.id,
-          peers,
-          workOrderId: wo.id
-        },
-        onProgress: (event) => {
-          this.emit({ type: 'wo-progress', workOrderId: wo.id, agentId: instance.id, event });
+        const result = await this.executor.run({
+          provider,
+          modelId: instance.modelId,
+          systemPrompt,
+          userTask: `Execute Work Order ${wo.id}: ${wo.title}\n\n${wo.description}`,
+          maxIterations: 40,
+          orchestraContext: {
+            mailbox: this.mailbox,
+            agentId: instance.id,
+            peers,
+            workOrderId: wo.id
+          },
+          onProgress: (event) => {
+            this.emit({ type: 'wo-progress', workOrderId: wo.id, agentId: instance.id, event });
+          }
+        });
+
+        const duration = Date.now() - startTime;
+        const cost = provider.estimateCost(result.inputTokensEstimate, result.outputTokensEstimate, instance.modelId);
+        cumulativeCost += cost;
+
+        if (result.success) {
+          wo.result = buildWorkOrderResult(result, duration, cumulativeCost);
+          wo.status = 'done';
+          wo.endedAt = Date.now();
+          this.emit({
+            type: 'wo-done',
+            workOrderId: wo.id,
+            agentId: instance.id,
+            success: true,
+            duration,
+            cost
+          });
+          return;
         }
-      });
 
-      const duration = Date.now() - startTime;
-      const cost = provider.estimateCost(result.inputTokensEstimate, result.outputTokensEstimate, instance.modelId);
+        // Failed — record error and try next provider in chain
+        lastError = result.error ?? 'agent did not complete';
+        this.emit({
+          type: 'wo-done',
+          workOrderId: wo.id,
+          agentId: instance.id,
+          success: false,
+          duration,
+          cost
+        });
 
-      wo.result = buildWorkOrderResult(result, duration, cost);
-      wo.status = result.success ? 'done' : 'failed';
-      wo.endedAt = Date.now();
-
-      this.emit({
-        type: 'wo-done',
-        workOrderId: wo.id,
-        agentId: instance.id,
-        success: result.success,
-        duration,
-        cost
-      });
-    } finally {
-      instance.release();
+        if (attempt + 1 < providersToTry.length) {
+          this.emit({
+            type: 'wo-fallback',
+            workOrderId: wo.id,
+            failedProvider: provider.name,
+            nextProvider: providersToTry[attempt + 1].name,
+            reason: lastError
+          });
+        } else {
+          // No more fallbacks — record the failure
+          wo.result = buildWorkOrderResult(result, duration, cumulativeCost);
+          wo.status = 'failed';
+          wo.endedAt = Date.now();
+        }
+      } catch (err: any) {
+        lastError = err.message;
+        this.emit({
+          type: 'wo-done',
+          workOrderId: wo.id,
+          agentId: instance.id,
+          success: false,
+          duration: Date.now() - startTime,
+          cost: 0
+        });
+        if (attempt + 1 < providersToTry.length) {
+          this.emit({
+            type: 'wo-fallback',
+            workOrderId: wo.id,
+            failedProvider: provider.name,
+            nextProvider: providersToTry[attempt + 1].name,
+            reason: lastError ?? 'unknown error'
+          });
+        } else {
+          wo.status = 'failed';
+          wo.result = {
+            filesCreated: [], filesModified: [], toolsUsed: [],
+            summary: `All providers failed. Last error: ${lastError}`,
+            iterations: 0, tokensUsed: 0, cost: cumulativeCost,
+            duration: Date.now() - startTime,
+            finalText: '', error: lastError
+          };
+          wo.endedAt = Date.now();
+        }
+      } finally {
+        instance.release();
+      }
     }
   }
 
