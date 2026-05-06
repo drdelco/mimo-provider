@@ -1,12 +1,8 @@
-import * as vscode from 'vscode';
-import { TOOLS, executeTool, ToolCall } from './tools';
-
-interface ChatMessage {
-  role: 'user' | 'assistant' | 'tool';
-  content: string;
-  tool_calls?: any[];
-  tool_call_id?: string;
-}
+﻿import * as vscode from 'vscode';
+import { TOOLS, WEB_SEARCH_TOOL, LOCAL_WEB_TOOLS, executeTool, ToolCall, containsWebSearchXml, executeWebSearchFromXml } from './tools';
+import { buildSystemPrompt, invalidatePromptCache } from './prompt';
+import { ChatMessage, compressHistory, serializeHistory, deserializeHistory } from './context';
+import { pickModel, getModel, getModels, getApiConfig, fetchModelsFromApi, getModelOptions, getApiConfigForModel, getApiConfigForModelAsync, markModelSuccess, markModelFailed, getFallbackChain } from './provider';
 
 export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'mimo.chatView';
@@ -15,124 +11,48 @@ export class MiMoChatViewProvider implements vscode.WebviewViewProvider {
   private conversationHistory: ChatMessage[] = [];
   private pendingMessages: string[] = [];
   private isProcessing = false;
-  private readonly systemPrompt = `You are MiMo, an advanced AI coding assistant by Xiaomi. You are running inside Antigravity IDE.
-
-You have access to tools that let you:
-- Read, write, and edit files
-- Run terminal commands
-- Search across the codebase
-- List files and directories
-- Check diagnostics (errors/warnings)
-
-## Your Workflow
-1. When given a task, FIRST explore the codebase to understand it
-2. Read relevant files before making changes
-3. Make precise edits rather than rewriting entire files when possible
-4. Test your changes by running commands when appropriate
-5. Report what you did and what the user should verify
-
-## CRITICAL: Shell Detection
-- NEVER assume the shell is bash/sh. On Windows, it may be CMD or PowerShell.
-- Before running commands, DETECT the OS: try \`ver\` (Windows) or \`uname -a\` (Unix).
-- If \`ver\` works → use Windows commands (dir, type, findstr, copy, del, etc.)
-- If \`uname\` works → use Unix commands (ls, cat, grep, cp, rm, etc.)
-- For cross-platform tasks, prefer the appropriate shell syntax.
-- On Windows CMD: use \`dir\`, \`type\`, \`cd /d\`, \`copy\`, \`del\`
-- On Windows PowerShell: use \`Get-ChildItem\`, \`Get-Content\`, \`Set-Location\`
-- On Unix/Linux/macOS: use \`ls\`, \`cat\`, \`cd\`, \`cp\`, \`rm\`
-
-## Progress Feedback
-- IMPORTANT: Always give brief progress updates to the user between tool calls.
-- Say what you're about to do: "Voy a explorar el proyecto..." or "Let me check the config..."
-- After reading files, summarize what you found: "Encontré X en el archivo Y"
-- When making changes, explain the intent: "Voy a modificar Z para que..."
-- If a task has many steps, give intermediate updates: "Paso 3 de 5 completado..."
-- Use clear, friendly language — the user is waiting for your response.
-
-## Rules
-- Always read a file before editing it
-- Use edit_file for surgical changes, write_file only for new files or complete rewrites
-- Be concise in explanations
-- Show code in markdown code blocks when explaining
-- If something fails, diagnose before retrying
-- Ask clarifying questions when the task is ambiguous
-- When a task is very long, break it into phases and explain each phase
-- NEVER guess file paths — use search or listing tools first
-
-## CRITICAL: Read Existing Context Files First
-Before exploring the codebase, READ these files if they exist — they contain valuable project context written by humans or other agents:
-
-### Priority order:
-1. \`CLAUDE.md\` — Claude Code project rules (root of project)
-2. \`.mimo-context.md\` — Your own previous context (if exists)
-3. \`.claude/settings.json\` — Claude Code project settings
-4. \`.claude/rules/*.md\` — All scoped rule files (read each one)
-5. \`.agent/memory/*.md\` — Antigravity memory files
-6. \`.agent/AGENTS.md\` or \`AGENTS.md\` — Agent framework rules
-7. \`.cursorrules\` — Cursor rules (if project uses Cursor)
-8. \`.github/copilot-instructions.md\` — GitHub Copilot instructions
-
-### How to check:
-- Use \`list_files .\` to see root files
-- Use \`list_files .claude\` and \`list_files .claude/rules\`
-- Use \`list_files .agent\` and \`list_files .agent/memory\`
-- Read each found file with \`read_file\`
-
-### Why this matters:
-- \`CLAUDE.md\` often contains build commands, conventions, architecture notes
-- These files save you 10+ iterations of re-discovering what others already documented
-- Respect the rules in these files — they represent the developer's preferences
-
-## CRITICAL: Project Context Memory (.mimo-context.md)
-You MUST maintain a context memory file to handle large projects efficiently.
-
-### When starting a task:
-1. FIRST, check if \`.mimo-context.md\` exists in the project root
-2. If it exists, READ IT before exploring the codebase — it contains your previous findings
-3. Only re-explore areas not covered in the context file
-
-### While working:
-- After discovering important information (architecture, file locations, patterns, configs),
-  UPDATE \`.mimo-context.md\` immediately — don't wait until the end
-- Structure the file with clear sections:
-
-\`\`\`markdown
-# MiMo Context — [Project Name]
-
-## Task: [current task description]
-
-## Architecture
-- Framework: React + TypeScript + Mantine UI
-- Backend: Firebase Functions + Firestore
-- Auth: Firebase Auth
-
-## Key Files
-- src/types/index.ts — Patient, Professional, Appointment types
-- src/services/firebase.ts — Firebase config and exports
-- src/components/layout/MainLayout.tsx — Main navigation shell
-
-## Current Task Progress
-- [x] Step 1: Identified appointment flow
-- [x] Step 2: Modified AppointmentModal.tsx
-- [ ] Step 3: Update Firestore rules
-
-## Notes & Patterns
-- Uses DraggableModal for all modals
-- CLINIC_ID imported from firebase.ts
-- Form state uses useState hooks (not form libraries)
-
-## Issues Found
-- Line 45 in AppointmentModal.tsx: potential null reference
-\`\`\`
-
-### Why this matters:
-- You have a large context window — use it to YOUR advantage
-- The context file is YOUR memory between sessions
-- It prevents re-reading the same files repeatedly
-- For multi-step tasks across 20+ iterations, this is ESSENTIAL
-- Update it at checkpoints AND whenever you discover something important`;
+  private extensionContext?: vscode.ExtensionContext;
+  private tabId?: number;
+  private _pendingImages: string[] = [];
 
   constructor(private readonly extensionUri: vscode.Uri) {}
+
+  /** Set the tab ID for independent history persistence (tabs only, not sidebar) */
+  public setTabId(id: number) { this.tabId = id; }
+  public getTabId(): number | undefined { return this.tabId; }
+
+  public setExtensionContext(ctx: vscode.ExtensionContext) {
+    this.extensionContext = ctx;
+    const key = this.tabId ? `mimo.tab.${this.tabId}.history` : 'mimo.history';
+    const saved = ctx.workspaceState.get<string>(key);
+    if (saved) {
+      this.conversationHistory = deserializeHistory(saved);
+    }
+  }
+
+  private persistHistory() {
+    if (this.extensionContext) {
+      const key = this.tabId ? `mimo.tab.${this.tabId}.history` : 'mimo.history';
+      this.extensionContext.workspaceState.update(key, serializeHistory(this.conversationHistory));
+    }
+  }
+
+  /** Check if this provider has conversation history loaded */
+  public hasHistory(): boolean { return this.conversationHistory.length > 0; }
+
+  /** Return history in a format the webview can render */
+  public getHistoryForRestore(): { role: string; content: string }[] {
+    return this.conversationHistory
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content && !m.tool_calls)
+      .map(m => ({ role: m.role, content: m.content }));
+  }
+
+  /** Clean up persisted history for this tab */
+  public removePersistedHistory() {
+    if (this.extensionContext && this.tabId) {
+      this.extensionContext.workspaceState.update(`mimo.tab.${this.tabId}.history`, undefined);
+    }
+  }
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -148,90 +68,25 @@ You MUST maintain a context memory file to handle large projects efficiently.
 
     webviewView.webview.html = this.getHtml(webviewView.webview);
 
-    // Handle messages from the webview
-    webviewView.webview.onDidReceiveMessage(async (message) => {
-      switch (message.type) {
-        case 'sendMessage':
-          if (this.isProcessing) {
-            this.pendingMessages.push(message.text);
-            this.postMessage({ type: 'stream', text: `⏳ *Mensaje recibido — se incorporará en el siguiente paso.*\n\n` });
-          } else {
-            await this.handleUserMessage(message.text);
-          }
-          break;
-        case 'stopProcessing':
-          this.isProcessing = false;
-          this.pendingMessages = [];
-          this.postMessage({ type: 'stream', text: '\n\n⏹ *Procesamiento detenido por el usuario.*\n' });
-          this.postMessage({ type: 'streamEnd' });
-          break;
-        case 'clearHistory':
-          this.conversationHistory = [];
-          this.pendingMessages = [];
-          this.postMessage({ type: 'historyCleared' });
-          break;
-        case 'insertCode':
-          await this.insertCodeToEditor(message.code);
-          break;
-        case 'pickFile':
-          const fileUris = await vscode.window.showOpenDialog({
-            canSelectMany: true,
-            openLabel: 'Add as context',
-            filters: { 'Code files': ['ts', 'tsx', 'js', 'jsx', 'json', 'md', 'py', 'css', 'html'], 'All files': ['*'] }
-          });
-          if (fileUris) {
-            for (const uri of fileUris) {
-              const relPath = vscode.workspace.asRelativePath(uri);
-              this.postMessage({ type: 'filePicked', path: relPath });
-            }
-          }
-          break;
-        case 'attachFiles':
-          // Read file contents and add to conversation as system context
-          for (const filePath of message.files) {
-            try {
-              const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-              if (workspaceRoot) {
-                const fullPath = vscode.Uri.joinPath(vscode.Uri.file(workspaceRoot), filePath);
-                const doc = await vscode.workspace.openTextDocument(fullPath);
-                const content = doc.getText().substring(0, 50000); // Limit to 50K chars
-                this.conversationHistory.push({
-                  role: 'user',
-                  content: `[Context file: ${filePath}]\n\`\`\`${doc.languageId}\n${content}\n\`\`\``
-                });
-              }
-            } catch (err: any) {
-              this.postMessage({ type: 'stream', text: `⚠️ No se pudo leer ${filePath}: ${err.message}\n` });
-            }
-          }
-          break;
-      }
+    webviewView.webview.onDidReceiveMessage((message) => {
+      this.clearActiveWebview();
+      this.handleWebviewMessage(message);
     });
   }
 
-  private getApiKey(): string {
-    const config = vscode.workspace.getConfiguration('mimo');
-    const inspect = config.inspect<string>('apiKey');
-    return inspect?.workspaceValue || inspect?.globalValue || '';
-  }
-
-  private getBaseUrl(): string {
-    const config = vscode.workspace.getConfiguration('mimo');
-    const inspect = config.inspect<string>('baseUrl');
-    return inspect?.workspaceValue || inspect?.globalValue || 'https://token-plan-ams.xiaomimimo.com/v1';
-  }
-
   public async handleUserMessage(text: string) {
-    const apiKey = this.getApiKey();
-    if (!apiKey) {
-      this.postMessage({
-        type: 'error',
-        text: 'API Key no configurada. Usa Ctrl+Shift+P → "MiMo: Configure API Key"'
-      });
-      return;
+    const baseConfig = getApiConfig();
+    if (!baseConfig.apiKey) {
+      // Also check OAuth providers
+      const { getValidToken } = await import('./oauth');
+      const hasKimiOAuth = await getValidToken('kimi');
+      const hasMiniMaxOAuth = await getValidToken('minimax');
+      if (!hasKimiOAuth && !hasMiniMaxOAuth) {
+        this.postMessage({ type: 'error', text: 'API Key not configured. Use Ctrl+Shift+P > MiMo: Configure API Key or MiMo: Login to Kimi/MiniMax' });
+        return;
+      }
     }
 
-    // Add editor context
     let userMessage = text;
     const editor = vscode.window.activeTextEditor;
     if (editor) {
@@ -243,171 +98,460 @@ You MUST maintain a context memory file to handle large projects efficiently.
     }
 
     this.conversationHistory.push({ role: 'user', content: userMessage });
-    if (this.conversationHistory.length > 30) {
-      this.conversationHistory = this.conversationHistory.slice(-20);
-    }
+    this.conversationHistory = compressHistory(this.conversationHistory);
 
     this.isProcessing = true;
     this.postMessage({ type: 'startStreaming' });
 
-    const baseUrl = this.getBaseUrl();
-    const maxIterations = 500; // Safety cap only
-    const CHECKPOINT_INTERVAL = 20; // Force progress summary every N iterations
+    const maxIterations = 500;
+    const CHECKPOINT_INTERVAL = 10;
 
     try {
       let iteration = 0;
       let needsMoreToolCalls = true;
+      let lastToolName: string | undefined;
+      const toolsUsed: string[] = [];       // Track tool history for summaries
+      const filesRead = new Set<string>();
+      const filesModified = new Set<string>();
 
       while (needsMoreToolCalls && iteration < maxIterations) {
         iteration++;
 
-        // Inject any pending user messages mid-loop
+        // ---- Visible feedback: BEFORE API call ----
+        const stepLabel = iteration === 1 ? 'Analyzing your request...'
+          : lastToolName ? `Continuing after ${this.friendlyToolName(lastToolName)}...`
+          : 'Processing...';
+        this.postMessage({ type: 'step', text: `Step ${iteration} â€” ${stepLabel}` });
+
+        // Inject pending user messages
         while (this.pendingMessages.length > 0) {
           const queuedMsg = this.pendingMessages.shift()!;
-          this.conversationHistory.push({
-            role: 'user',
-            content: `📨 [Mensaje del usuario durante el trabajo]: ${queuedMsg}`
-          });
-          this.postMessage({ type: 'stream', text: `📨 *Incorporando tu mensaje en el flujo de trabajo...*\n\n` });
+          this.conversationHistory.push({ role: 'user', content: `[User message during work]: ${queuedMsg}` });
+          this.postMessage({ type: 'step', text: `Step ${iteration} â€” incorporating your message...` });
         }
 
-        // Force progress checkpoint every N iterations
-        if (iteration > 1 && iteration % CHECKPOINT_INTERVAL === 1) {
-          this.postMessage({ type: 'stream', text: `\n\n📊 **Checkpoint (${iteration}/${maxIterations})** — pidiendo resumen de progreso...\n\n` });
+        // Checkpoint every N iterations
+        if (iteration > 1 && iteration % CHECKPOINT_INTERVAL === 0) {
+          this.postMessage({ type: 'step', text: `Step ${iteration} â€” checkpoint, requesting progress summary...` });
           this.conversationHistory.push({
             role: 'user',
-            content: `⚠️ PUNTO DE CONTROL: Llevas ${iteration - 1} iteraciones. Antes de continuar, haz un resumen rápido de:
-1. Qué has hecho hasta ahora
-2. Qué falta por hacer
-3. Si estás en un bucle o estancado, dilo claramente
-Continúa después del resumen.`
+            content: `CHECKPOINT: ${iteration} iterations done. Give a brief summary: 1) what you did 2) what remains 3) if stuck, say so clearly. Then continue.`
           });
         }
 
-        const messages = [
-          { role: 'system', content: this.systemPrompt },
+        let modelId = pickModel(this._pendingImages.length > 0, lastToolName, iteration);
+        let modelSpec = getModel(modelId);
+        let { apiKey, baseUrl } = await getApiConfigForModelAsync(modelId);
+        const isDeepSeek = modelId.startsWith('deepseek');
+        const isMiniMax = modelId.startsWith('MiniMax') || modelId.startsWith('minimax');
+        const needsDuckDuckGo = isDeepSeek || isMiniMax;
+
+        // Build messages array, injecting pending images into the last user message
+        const rawMessages: any[] = [
+          { role: 'system', content: buildSystemPrompt() },
           ...this.conversationHistory
         ];
 
-        const response = await fetch(`${baseUrl}/chat/completions`, {
+        // If there are pending images and the model supports vision, inject them
+        if (this._pendingImages.length > 0 && modelSpec.supportsVision) {
+          for (let i = rawMessages.length - 1; i >= 0; i--) {
+            if (rawMessages[i].role === 'user') {
+              const contentParts: any[] = [{ type: 'text', text: rawMessages[i].content }];
+              for (const imgDataUrl of this._pendingImages) {
+                contentParts.push({
+                  type: 'image_url',
+                  image_url: { url: imgDataUrl, detail: 'high' }
+                });
+              }
+              rawMessages[i] = { role: 'user', content: contentParts };
+              break;
+            }
+          }
+          this._pendingImages = []; // Clear after use
+          // Tell the webview to remove the image thumbnails
+          this.postMessage({ type: 'clearImages' });
+        } else if (this._pendingImages.length > 0 && !modelSpec.supportsVision) {
+          // No vision model available â€” use read_image tool as fallback
+          // Save images to temp files and inject read_image tool calls into the conversation
+          this.postMessage({ type: 'step', text: 'Step ' + iteration + ' â€” images detected, switching to vision-capable model...' });
+          // Force switch to a vision model for this iteration
+          const visionModels = getModels().filter(m => m.supportsVision);
+          if (visionModels.length > 0) {
+            // Override the model for this request
+            const visionModel = visionModels[0];
+            modelId = visionModel.id;
+            modelSpec = visionModel;
+            const vc = await getApiConfigForModelAsync(modelId);
+            apiKey = vc.apiKey;
+            baseUrl = vc.baseUrl;
+            // Re-inject images with the vision model
+            for (let i = rawMessages.length - 1; i >= 0; i--) {
+              if (rawMessages[i].role === 'user') {
+                const contentParts: any[] = [{ type: 'text', text: rawMessages[i].content }];
+                for (const imgDataUrl of this._pendingImages) {
+                  contentParts.push({
+                    type: 'image_url',
+                    image_url: { url: imgDataUrl, detail: 'high' }
+                  });
+                }
+                rawMessages[i] = { role: 'user', content: contentParts };
+                break;
+              }
+            }
+            this._pendingImages = [];
+            this.postMessage({ type: 'clearImages' });
+          } else {
+            // Truly no vision model â€” clear images and inform user
+            this._pendingImages = [];
+            this.postMessage({ type: 'clearImages' });
+            this.postMessage({ type: 'stream', text: '*No vision-capable model available. Images were discarded. Please describe what you see in the screenshot.*\n' });
+          }
+        }
+
+        const messages = rawMessages;
+
+        // Only think on first iteration and checkpoints â€” fast mode for tool calls
+        const useThinking = modelSpec.supportsThinking && (iteration === 1 || iteration % CHECKPOINT_INTERVAL === 0);
+
+        const useXiaomiSearch = vscode.workspace.getConfiguration('mimo').get('webSearch');
+        // Xiaomi builtin_function ($web_search) is not compatible with DeepSeek
+        const tools = needsDuckDuckGo
+          ? [...TOOLS, ...LOCAL_WEB_TOOLS]
+          : (useXiaomiSearch ? [...TOOLS, ...LOCAL_WEB_TOOLS, WEB_SEARCH_TOOL] : [...TOOLS, ...LOCAL_WEB_TOOLS]);
+        const requestBody: Record<string, any> = {
+          model: modelId,
+          messages,
+          tools,
+          stream: true,
+          max_completion_tokens: Math.min(modelSpec.maxOutputTokens, 32768),
+          temperature: modelId === 'mimo-v2-flash' ? 0.3 : 0.5,
+          ...(needsDuckDuckGo ? {} : { thinking: { type: useThinking ? 'enabled' : 'disabled' } })
+        };
+
+        let response = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: 'mimo-v2-pro',
-            messages,
-            tools: TOOLS,
-            stream: false,
-            max_tokens: 4096,
-            temperature: 0.3
-          }),
-          signal: AbortSignal.timeout(120000)
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(300000)
         });
 
+        // Flash fallback to Pro
+        if (!response.ok && modelId === 'mimo-v2-flash') {
+          const fb = getModel('mimo-v2-pro');
+          requestBody.model = 'mimo-v2-pro';
+          requestBody.max_completion_tokens = Math.min(fb.maxOutputTokens, 32768);
+          if (!needsDuckDuckGo) { requestBody.thinking = { type: 'enabled' }; }
+          response = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(300000)
+          });
+        }
+
+        // Web search fallback: if Xiaomi/Kimi plugin fails, retry with DuckDuckGo
+        if (!response.ok && useXiaomiSearch) {
+          const errDetail = await response.text().catch(() => '');
+          this.postMessage({ type: 'stream', text: `*$web_search failed (${response.status}: ${errDetail.substring(0, 100)}) - switching to DuckDuckGo...*\n` });
+          requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
+          response = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(300000)
+          });
+        }
+
+        // Cross-provider fallback: try other models if the current one fails
         if (!response.ok) {
-          const errorText = await response.text();
-          this.postMessage({ type: 'error', text: `Error ${response.status}: ${errorText}` });
-          return;
-        }
+          markModelFailed(modelId);
+          const fallbackChain = getFallbackChain(modelId, false);
+          let fallbackSuccess = false;
 
-        const data = await response.json() as any;
-        const choice = data.choices?.[0];
-        if (!choice) {
-          this.postMessage({ type: 'error', text: 'No se recibió respuesta válida.' });
-          return;
-        }
+          for (const fallbackId of fallbackChain) {
+            const fbSpec = getModel(fallbackId);
+            const fbConfig = await getApiConfigForModelAsync(fallbackId);
+            const fbIsDeepSeek = fallbackId.startsWith('deepseek');
+            const fbIsMiniMax = fallbackId.startsWith('MiniMax') || fallbackId.startsWith('minimax');
+            const fbNeedsDuckDuckGo = fbIsDeepSeek || fbIsMiniMax;
 
-        // Track token usage from API response
-        if (data.usage) {
-          this.postMessage({
-            type: 'tokenUsage',
-            prompt: data.usage.prompt_tokens || 0,
-            completion: data.usage.completion_tokens || 0,
-            total: data.usage.total_tokens || 0
-          });
-        }
+            this.postMessage({ type: 'stream', text: `*Model ${modelId} failed (${response.status}) - trying ${fallbackId}...*\n` });
 
-        const message = choice.message;
+            requestBody.model = fallbackId;
+            requestBody.max_completion_tokens = Math.min(fbSpec.maxOutputTokens, 32768);
+            if (fbNeedsDuckDuckGo) {
+              delete requestBody.thinking;
+              requestBody.tools = [...TOOLS, ...LOCAL_WEB_TOOLS];
+            } else {
+              requestBody.thinking = { type: 'enabled' };
+            }
 
-        if (choice.finish_reason === 'tool_calls' && message.tool_calls) {
-          this.conversationHistory.push({
-            role: 'assistant',
-            content: message.content || '',
-            tool_calls: message.tool_calls
-          });
-
-          for (const toolCall of message.tool_calls) {
-            const tc: ToolCall = {
-              id: toolCall.id,
-              function: {
-                name: toolCall.function.name,
-                arguments: toolCall.function.arguments
-              }
-            };
-
-            const args = JSON.parse(tc.function.arguments);
-            this.postMessage({
-              type: 'toolCall',
-              name: tc.function.name,
-              args: this.formatToolCall(tc.function.name, args)
+            response = await fetch(`${fbConfig.baseUrl}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${fbConfig.apiKey}` },
+              body: JSON.stringify(requestBody),
+              signal: AbortSignal.timeout(300000)
             });
 
-            const result = await executeTool(tc);
+            if (response.ok) {
+              markModelSuccess(fallbackId);
+              fallbackSuccess = true;
+              break;
+            }
+          }
 
-            this.postMessage({
-              type: 'toolResult',
-              name: tc.function.name,
-              result: result.length > 2000 ? result.substring(0, 2000) + '\n...' : result
-            });
-
-            this.conversationHistory.push({
-              role: 'tool',
-              content: result,
-              tool_call_id: tc.id
-            });
+          if (!fallbackSuccess) {
+            const errorText = await response.text();
+            this.postMessage({ type: 'error', text: `Error - all models failed. Last error (${response.status}): ${errorText}` });
+            return;
           }
         } else {
-          needsMoreToolCalls = false;
+          markModelSuccess(modelId);
+        }
 
-          if (message.content) {
-            this.postMessage({ type: 'assistantMessage', text: message.content });
-            this.conversationHistory.push({ role: 'assistant', content: message.content });
+        // ---- Parse SSE stream ----
+        const parsed = await this.parseSSEResponse(response);
+
+        if (parsed.usage) {
+          this.postMessage({ type: 'tokenUsage', prompt: parsed.usage.prompt_tokens || 0, completion: parsed.usage.completion_tokens || 0, total: parsed.usage.total_tokens || 0 });
+        }
+
+        // ---- $web_search XML handling ----
+        if (parsed.content && parsed.finishReason === 'tool_calls' && containsWebSearchXml(parsed.content)) {
+          this.postMessage({ type: 'toolCall', name: 'web_search', args: 'Searching the web...' });
+          const searchResult = await executeWebSearchFromXml(parsed.content);
+          if (searchResult) {
+            this.postMessage({ type: 'toolResult', name: 'web_search', result: searchResult.results.length > 2000 ? searchResult.results.substring(0, 2000) + '\n...' : searchResult.results });
+            this.conversationHistory.push({ role: 'assistant', content: parsed.content });
+            this.conversationHistory.push({ role: 'user', content: `[Web search results for: ${searchResult.query}]\n\n${searchResult.results}` });
+            continue;
           }
         }
+
+        // ---- Tool calls ----
+        if (parsed.toolCalls.length > 0) {
+          // Show any intermediate text from MiMo (only if not already streamed token-by-token)
+          if (parsed.content && !parsed.wasStreamed) {
+            this.postMessage({ type: 'stream', text: parsed.content + '\n' });
+          }
+
+          this.conversationHistory.push({ role: 'assistant', content: parsed.content || '', tool_calls: parsed.toolCalls });
+
+          for (const toolCall of parsed.toolCalls) {
+            const tc: ToolCall = { id: toolCall.id, function: { name: toolCall.function.name, arguments: toolCall.function.arguments } };
+            const args = JSON.parse(tc.function.arguments);
+
+            this.postMessage({ type: 'toolCall', name: tc.function.name, args: this.formatToolCall(tc.function.name, args) });
+
+            lastToolName = tc.function.name;
+            toolsUsed.push(tc.function.name);
+            if (tc.function.name === 'read_file') filesRead.add(args.path);
+            if (tc.function.name === 'write_file' || tc.function.name === 'edit_file') filesModified.add(args.path);
+
+            const result = await executeTool(tc);
+            this.postMessage({ type: 'toolResult', name: tc.function.name, result: result.length > 2000 ? result.substring(0, 2000) + '\n...' : result });
+
+            const historyResult = result.length > 4000 ? result.substring(0, 4000) + '\n... (truncated)' : result;
+            this.conversationHistory.push({ role: 'tool', content: historyResult, tool_call_id: tc.id });
+          }
+
+          if (iteration > 1 && iteration % 5 === 0) {
+            this.postMessage({ type: 'stream', text: this.buildProgressSummary(iteration, toolsUsed, filesRead, filesModified) });
+          }
+        } else {
+          // ---- Final response (already streamed to UI) ----
+          if (iteration > 1) {
+            this.postMessage({ type: 'stream', text: this.buildProgressSummary(iteration - 1, toolsUsed, filesRead, filesModified) });
+          }
+
+          needsMoreToolCalls = false;
+          // Content was already streamed token-by-token; now save to history
+          if (parsed.content) {
+            this.postMessage({ type: 'assistantDone' });
+            this.conversationHistory.push({ role: 'assistant', content: parsed.content });
+          }
+        }
+      }
+
+      // Festive summary for long tasks (>50 steps)
+      if (iteration > 50) {
+        const summary = this.buildFestiveSummary(iteration, toolsUsed, filesRead, filesModified);
+        this.postMessage({ type: 'festiveSummary', html: summary });
       }
 
       this.postMessage({ type: 'streamEnd' });
-
     } catch (error: any) {
-      this.postMessage({
-        type: 'error',
-        text: error.name === 'TimeoutError' ? 'Timeout (120s)' : error.message
-      });
+      this.postMessage({ type: 'error', text: error.name === 'TimeoutError' ? 'Timeout (120s)' : error.message });
     } finally {
       this.isProcessing = false;
-      // Flush any remaining pending messages as new user messages
       if (this.pendingMessages.length > 0) {
         const remaining = this.pendingMessages.splice(0);
-        for (const msg of remaining) {
-          this.conversationHistory.push({ role: 'user', content: msg });
-        }
-        this.postMessage({ type: 'stream', text: `📨 *${remaining.length} mensaje(s) pendiente(s) guardado(s) para la siguiente interacción.*\n\n` });
+        for (const msg of remaining) { this.conversationHistory.push({ role: 'user', content: msg }); }
       }
+      this.persistHistory();
     }
   }
 
   private formatToolCall(name: string, args: any): string {
     switch (name) {
-      case 'read_file': return `📖 Reading ${args.path}`;
-      case 'write_file': return `✏️ Writing ${args.path}`;
-      case 'edit_file': return `✏️ Editing ${args.path}`;
-      case 'run_terminal': return `💻 ${args.command}`;
-      case 'search_files': return `🔍 Searching "${args.pattern}"`;
-      case 'list_files': return `📁 Listing ${args.path || '.'}`;
-      case 'get_diagnostics': return `🩺 Checking diagnostics`;
+      case 'read_file': return `read ${args.path}${args.offset ? ':' + args.offset : ''}`;
+      case 'write_file': return `write ${args.path}`;
+      case 'edit_file': return `edit ${args.path}${args.replace_all ? ' (all)' : ''}`;
+      case 'run_terminal': return `$ ${args.command}`;
+      case 'search_files': return `search "${args.pattern}"${args.glob ? ' in ' + args.glob : ''}`;
+      case 'list_files': return `ls ${args.path || '.'}${args.recursive ? ' -R' : ''}`;
+      case 'find_files': return `find ${args.pattern}`;
+      case 'get_diagnostics': return `diagnostics ${args.path || '(all)'}`;
+      case 'read_image': return `image ${args.path}`;
       default: return `${name}(${JSON.stringify(args).substring(0, 100)})`;
+    }
+  }
+
+  /**
+   * Parse SSE streaming response. Streams content tokens to the webview in real-time.
+   * Accumulates tool_calls silently. Returns the complete parsed result.
+   */
+  private async parseSSEResponse(response: Response): Promise<{
+    content: string;
+    toolCalls: any[];
+    finishReason: string;
+    usage: any;
+    /** true if content was already streamed to the UI token-by-token */
+    wasStreamed: boolean;
+  }> {
+    let content = '';
+    const toolCallsMap = new Map<number, { id: string; function: { name: string; arguments: string } }>();
+    let finishReason = '';
+    let usage: any = null;
+    let isStreaming = false;
+    let wasStreamed = false;
+
+    const body = response.body;
+    if (!body) {
+      // Fallback: non-streaming response (e.g. fallback requests)
+      const data = await response.json() as any;
+      const choice = data.choices?.[0];
+      return {
+        content: choice?.message?.content || '',
+        toolCalls: choice?.message?.tool_calls || [],
+        finishReason: choice?.finish_reason || '',
+        usage: data.usage || null,
+        wasStreamed: false
+      };
+    }
+
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed === 'data: [DONE]') continue;
+          if (!trimmed.startsWith('data: ')) continue;
+
+          try {
+            const json = JSON.parse(trimmed.slice(6));
+            const delta = json.choices?.[0]?.delta;
+            const fr = json.choices?.[0]?.finish_reason;
+            if (fr) finishReason = fr;
+            if (json.usage) usage = json.usage;
+
+            if (delta?.content) {
+              content += delta.content;
+              // Stream content tokens to UI in real-time (only if no tool calls detected yet)
+              if (toolCallsMap.size === 0 && finishReason !== 'tool_calls') {
+                if (!isStreaming) {
+                  isStreaming = true;
+                  wasStreamed = true;
+                  this.postMessage({ type: 'streamStart' });
+                }
+                this.postMessage({ type: 'stream', text: delta.content });
+              }
+            }
+
+            // Accumulate tool_calls deltas
+            if (delta?.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index ?? 0;
+                if (!toolCallsMap.has(idx)) {
+                  toolCallsMap.set(idx, { id: tc.id || '', function: { name: '', arguments: '' } });
+                }
+                const entry = toolCallsMap.get(idx)!;
+                if (tc.id) entry.id = tc.id;
+                if (tc.function?.name) entry.function.name += tc.function.name;
+                if (tc.function?.arguments) entry.function.arguments += tc.function.arguments;
+              }
+            }
+          } catch { /* skip malformed SSE lines */ }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    return {
+      content,
+      toolCalls: [...toolCallsMap.values()],
+      finishReason,
+      usage,
+      wasStreamed
+    };
+  }
+
+  private buildProgressSummary(iteration: number, toolsUsed: string[], filesRead: Set<string>, filesModified: Set<string>): string {
+    const parts: string[] = [`*Progress: ${iteration} steps completed.*`];
+    if (filesRead.size > 0) parts.push(`Files read: ${[...filesRead].slice(-5).join(', ')}`);
+    if (filesModified.size > 0) parts.push(`Files modified: ${[...filesModified].join(', ')}`);
+    const searches = toolsUsed.filter(t => t === 'web_search' || t === 'search_files').length;
+    const commands = toolsUsed.filter(t => t === 'run_terminal').length;
+    if (searches > 0) parts.push(`Searches: ${searches}`);
+    if (commands > 0) parts.push(`Commands run: ${commands}`);
+    return parts.join(' | ') + '\n';
+  }
+
+  private buildFestiveSummary(iteration: number, toolsUsed: string[], filesRead: Set<string>, filesModified: Set<string>): string {
+    const searches = toolsUsed.filter(t => t === 'web_search' || t === 'search_files').length;
+    const commands = toolsUsed.filter(t => t === 'run_terminal').length;
+    const reads = toolsUsed.filter(t => t === 'read_file').length;
+    const edits = toolsUsed.filter(t => t === 'edit_file' || t === 'write_file').length;
+
+    let html = '<div class="festive-summary">';
+    html += '<div class="festive-header">ðŸŽ‰ðŸ† <b>Task Complete!</b> ðŸ†ðŸŽ‰</div>';
+    html += '<div class="festive-stats">';
+    html += `<div class="stat">âš¡ <b>${iteration}</b> steps executed</div>`;
+    html += `<div class="stat">ðŸ“– <b>${reads}</b> files read Â· ðŸ“ <b>${filesRead.size}</b> unique</div>`;
+    html += `<div class="stat">âœï¸ <b>${edits}</b> edits made Â· ðŸ“ <b>${filesModified.size}</b> files modified</div>`;
+    if (commands > 0) html += `<div class="stat">ðŸ–¥ï¸ <b>${commands}</b> commands run</div>`;
+    if (searches > 0) html += `<div class="stat">ðŸ” <b>${searches}</b> searches performed</div>`;
+    html += '</div>';
+    html += '<div class="festive-footer">ðŸš€âœ¨ <i>Excellent work! Ready for the next challenge.</i> âœ¨ðŸš€</div>';
+    html += '</div>';
+    return html;
+  }
+
+  private friendlyToolName(name: string): string {
+    switch (name) {
+      case 'read_file': return 'reading file';
+      case 'write_file': return 'writing file';
+      case 'edit_file': return 'editing file';
+      case 'run_terminal': return 'running command';
+      case 'search_files': return 'searching code';
+      case 'list_files': return 'listing files';
+      case 'find_files': return 'finding files';
+      case 'get_diagnostics': return 'checking diagnostics';
+      case 'read_image': return 'analyzing image';
+      case 'web_search': return 'web search';
+      case 'fetch_url': return 'fetching page';
+      default: return name;
     }
   }
 
@@ -416,274 +560,139 @@ Continúa después del resumen.`
     if (editor) {
       await editor.edit((editBuilder) => {
         const selection = editor.selection;
-        if (!selection.isEmpty) {
-          editBuilder.replace(selection, code);
-        } else {
-          editBuilder.insert(selection.active, code);
-        }
+        if (!selection.isEmpty) { editBuilder.replace(selection, code); }
+        else { editBuilder.insert(selection.active, code); }
       });
     }
   }
 
+  private activeWebview?: vscode.Webview;
+  public setActiveWebview(webview: vscode.Webview) { this.activeWebview = webview; }
+  public clearActiveWebview() { this.activeWebview = undefined; }
+
   private postMessage(message: any) {
-    this.view?.webview.postMessage(message);
+    const webview = this.activeWebview ?? this.view?.webview;
+    webview?.postMessage(message);
   }
 
   public clearHistory() {
     this.conversationHistory = [];
+    this.pendingMessages = [];
+    invalidatePromptCache();
     this.postMessage({ type: 'historyCleared' });
+    this.persistHistory();
+  }
+
+  public async handleWebviewMessage(message: any) {
+    switch (message.type) {
+      case 'sendMessage':
+        if (this.isProcessing) {
+          this.pendingMessages.push(message.text);
+          this.postMessage({ type: 'stream', text: '*(Message queued â€” will be incorporated in the next step)*\n' });
+        } else {
+          await this.handleUserMessage(message.text);
+        }
+        break;
+      case 'stopProcessing':
+        this.isProcessing = false;
+        this.pendingMessages = [];
+        this.postMessage({ type: 'streamEnd' });
+        break;
+      case 'openNewTab':
+        vscode.commands.executeCommand('mimo.openChat');
+        break;
+      case 'clearHistory':
+        this.clearHistory();
+        break;
+      case 'insertCode':
+        await this.insertCodeToEditor(message.code);
+        break;
+      case 'copyCode':
+        await vscode.env.clipboard.writeText(message.code);
+        break;
+      case 'exportChat': {
+        const md = this.conversationHistory
+          .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content && !m.tool_calls)
+          .map(m => m.role === 'user' ? `## User\n\n${m.content}` : `## MiMo\n\n${m.content}`)
+          .join('\n\n---\n\n');
+        const doc = await vscode.workspace.openTextDocument({ content: `# MiMo Chat Export\n\n${md}`, language: 'markdown' });
+        await vscode.window.showTextDocument(doc);
+        break;
+      }
+      case 'setModel':
+        await vscode.workspace.getConfiguration('mimo').update('preferredModel', message.model, vscode.ConfigurationTarget.Workspace);
+        this.postMessage({ type: 'stream', text: `*Model set to ${message.model}*\n` });
+        break;
+      case 'fetchModels': {
+        const models = await fetchModelsFromApi();
+        const options = getModelOptions();
+        this.postMessage({ type: 'modelsLoaded', models: options });
+        break;
+      }
+      case 'attachImage': {
+        // Store image data in conversation history for multimodal models
+        if (message.dataUrl) {
+          this.conversationHistory.push({
+            role: 'user',
+            content: message.caption || '[Image pasted from clipboard]'
+          });
+          // Store image reference for next API call
+          this._pendingImages = this._pendingImages || [];
+          this._pendingImages.push(message.dataUrl);
+          this.postMessage({ type: 'imageAttached', preview: message.dataUrl.substring(0, 80) });
+        }
+        break;
+      }
+      case 'pickFile': {
+        const fileUris = await vscode.window.showOpenDialog({
+          canSelectMany: true, openLabel: 'Add as context',
+          filters: { 'Code files': ['ts', 'tsx', 'js', 'jsx', 'json', 'md', 'py', 'css', 'html'], 'All files': ['*'] }
+        });
+        if (fileUris) {
+          for (const uri of fileUris) {
+            this.postMessage({ type: 'filePicked', path: vscode.workspace.asRelativePath(uri) });
+          }
+        }
+        break;
+      }
+      case 'attachFiles':
+        for (const filePath of message.files) {
+          try {
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (root) {
+              const doc = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(vscode.Uri.file(root), filePath));
+              this.conversationHistory.push({ role: 'user', content: `[Context: ${filePath}]\n\`\`\`${doc.languageId}\n${doc.getText().substring(0, 50000)}\n\`\`\`` });
+            }
+          } catch (err: any) {
+            this.postMessage({ type: 'error', text: `Cannot read ${filePath}: ${err.message}` });
+          }
+        }
+        break;
+    }
   }
 
   public getHtml(webview: vscode.Webview): string {
     const nonce = this.getNonce();
     const iconUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'icon.png'));
+    const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'webview.css'));
+    const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'webview.js'));
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:;">
+  <link href="${cssUri}" rel="stylesheet">
   <title>MiMo Chat</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
-      color: var(--vscode-foreground);
-      background: var(--vscode-editor-background);
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-    }
-    .header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px;
-      border-bottom: 1px solid var(--vscode-panel-border);
-    }
-    .header img { width: 24px; height: 24px; }
-    .header h3 { font-size: 14px; font-weight: 600; }
-    .header .spacer { flex: 1; }
-    .header button {
-      background: none;
-      border: none;
-      color: var(--vscode-foreground);
-      cursor: pointer;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-    }
-    .header button:hover { background: var(--vscode-toolbar-hoverBackground); }
-    #messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .message {
-      padding: 8px 12px;
-      border-radius: 8px;
-      line-height: 1.5;
-      word-wrap: break-word;
-    }
-    .user-msg {
-      background: var(--vscode-inputValidation-infoBackground);
-      align-self: flex-end;
-      max-width: 85%;
-    }
-    .assistant-msg {
-      background: var(--vscode-editor-inactiveSelectionBackground);
-      align-self: flex-start;
-      max-width: 95%;
-    }
-    .tool-msg {
-      background: var(--vscode-editorWidget-background);
-      border-left: 3px solid var(--vscode-activityBarBadge-background);
-      padding: 6px 10px;
-      font-size: 12px;
-      align-self: flex-start;
-      max-width: 95%;
-    }
-    .tool-result {
-      font-family: var(--vscode-editor-font-family);
-      font-size: 11px;
-      white-space: pre-wrap;
-      max-height: 150px;
-      overflow-y: auto;
-      background: var(--vscode-textCodeBlock-background);
-      padding: 6px;
-      border-radius: 4px;
-      margin-top: 4px;
-    }
-    .error-msg {
-      background: var(--vscode-inputValidation-errorBackground);
-      color: var(--vscode-inputValidation-errorForeground);
-      border-radius: 8px;
-    }
-    pre {
-      background: var(--vscode-textCodeBlock-background);
-      padding: 8px;
-      border-radius: 4px;
-      overflow-x: auto;
-      font-size: 12px;
-    }
-    code { font-family: var(--vscode-editor-font-family); }
-    .typing { opacity: 0.6; font-style: italic; }
-    .input-area {
-      display: flex;
-      gap: 8px;
-      padding: 12px;
-      border-top: 1px solid var(--vscode-panel-border);
-      align-items: flex-end;
-    }
-    .input-controls {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .input-controls button {
-      background: none;
-      border: none;
-      color: var(--vscode-descriptionForeground);
-      border-radius: 4px;
-      width: 28px;
-      height: 28px;
-      cursor: pointer;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-    }
-    .input-controls button:hover { color: var(--vscode-foreground); }
-    .input-controls #stopBtn { color: var(--vscode-errorForeground); }
-    .input-controls #stopBtn:hover { color: var(--vscode-inputValidation-errorForeground); }
-    .input-wrapper {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .attached-files {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-    }
-    .attached-file {
-      background: var(--vscode-badge-background);
-      color: var(--vscode-badge-foreground);
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-size: 11px;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .attached-file button {
-      background: none;
-      border: none;
-      color: var(--vscode-badge-foreground);
-      cursor: pointer;
-      font-size: 12px;
-      padding: 0;
-      line-height: 1;
-    }
-    .token-usage {
-      background: var(--vscode-editorWidget-background);
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 8px;
-      padding: 12px;
-      margin: 8px 12px;
-      font-size: 12px;
-    }
-    .token-usage h4 { margin-bottom: 8px; font-size: 13px; }
-    .token-usage .bar {
-      height: 6px;
-      background: var(--vscode-progressBar-background);
-      border-radius: 3px;
-      margin: 4px 0;
-    }
-    .token-usage .bar-fill {
-      height: 100%;
-      background: var(--vscode-activityBarBadge-background);
-      border-radius: 3px;
-      transition: width 0.3s;
-    }
-    .input-area textarea {
-      flex: 1;
-      background: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      border: 1px solid var(--vscode-input-border);
-      border-radius: 6px;
-      padding: 8px 12px;
-      font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
-      resize: none;
-      min-height: 40px;
-      max-height: 120px;
-    }
-    .input-area textarea:focus { outline: none; border-color: var(--vscode-focusBorder); }
-    .welcome {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      padding: 40px 20px;
-      text-align: center;
-      color: var(--vscode-descriptionForeground);
-    }
-    .welcome img { width: 48px; height: 48px; opacity: 0.7; }
-    .welcome h2 { font-size: 16px; color: var(--vscode-foreground); }
-    .welcome p { font-size: 12px; line-height: 1.6; }
-    .quick-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: center;
-      margin-top: 12px;
-    }
-    .quick-actions button {
-      background: none;
-      color: var(--vscode-descriptionForeground);
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 4px;
-      padding: 4px 10px;
-      font-size: 11px;
-      cursor: pointer;
-      font-family: var(--vscode-font-family);
-    }
-    .quick-actions button:hover { color: var(--vscode-foreground); border-color: var(--vscode-foreground); }
-    .insert-btn {
-      background: none;
-      border: 1px solid var(--vscode-button-background);
-      color: var(--vscode-button-background);
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 10px;
-      cursor: pointer;
-      margin-top: 4px;
-    }
-    .insert-btn:hover { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-  </style>
 </head>
 <body>
-  <div class="header">
-    <img src="${iconUri}" alt="MiMo">
-    <h3>MiMo by Xiaomi</h3>
-    <div class="spacer"></div>
-    <button id="clearBtn" title="New chat">🗑️ New</button>
-  </div>
   <div id="messages">
     <div class="welcome" id="welcome">
       <img src="${iconUri}" alt="MiMo">
-      <h2>Welcome to MiMo</h2>
-      <p>AI coding assistant powered by Xiaomi MiMo V2.<br>I can read files, edit code, run commands, and more.</p>
-      <div class="quick-actions" id="quickActions">
+      <h2>MiMo by Xiaomi</h2>
+      <p>AI coding assistant powered by MiMo V2.<br>I can read files, edit code, run commands, and search the web.</p>
+      <div class="quick-actions">
         <button data-action="Explain the current file">Explain</button>
         <button data-action="Refactor this code">Refactor</button>
         <button data-action="Find bugs in this code">Debug</button>
@@ -692,227 +701,30 @@ Continúa después del resumen.`
     </div>
   </div>
   <div class="input-area">
-    <div class="input-controls">
-      <button id="addContextBtn" title="Attach file (context)">📎</button>
-      <button id="tokenUsageBtn" title="Token usage">📊</button>
-      <button id="stopBtn" title="Stop processing" style="display:none">⏹</button>
+    <div id="attachedFiles" class="attached-files"></div>
+    <div class="input-row">
+      <textarea id="input" placeholder="Ask MiMo..." rows="1"></textarea>
+      <button id="sendBtn" class="send-btn" title="Send">&#x2191;</button>
     </div>
-    <div class="input-wrapper">
-      <div id="attachedFiles" class="attached-files"></div>
-      <textarea id="input" placeholder="Ask MiMo... (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
+    <div class="input-toolbar">
+      <div class="left">
+        <button id="addContextBtn" class="toolbar-btn" title="Attach file">+ File</button>
+        <select id="modelSelect" class="toolbar-select" title="Select model">
+          <option value="auto">Auto</option>
+          <option value="mimo-v2-pro">Pro</option>
+          <option value="mimo-v2-flash">Flash</option>
+        </select>
+        <button id="exportBtn" class="toolbar-btn" title="Export as Markdown">Export</button>
+        <button id="tokenUsageBtn" class="toolbar-btn" title="Token usage">Usage</button>
+      </div>
+      <div class="right">
+        <button id="stopBtn" class="toolbar-btn danger" title="Stop" style="display:none">Stop</button>
+        <button id="newTabBtn" class="toolbar-btn" title="Open new tab">+ Tab</button>
+        <button id="newChatBtn" class="toolbar-btn danger" title="Clear this conversation">Clear</button>
+      </div>
     </div>
   </div>
-  <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
-    const messagesEl = document.getElementById('messages');
-    const inputEl = document.getElementById('input');
-    const clearBtn = document.getElementById('clearBtn');
-    const welcomeEl = document.getElementById('welcome');
-    const addContextBtn = document.getElementById('addContextBtn');
-    const tokenUsageBtn = document.getElementById('tokenUsageBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const attachedFilesEl = document.getElementById('attachedFiles');
-
-    let attachedFiles = [];
-    let totalTokensUsed = 0;
-    let sessionMessages = 0;
-
-    function scrollToBottom() {
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-
-    function addMessage(html, className) {
-      const div = document.createElement('div');
-      div.className = 'message ' + className;
-      div.innerHTML = html;
-      messagesEl.appendChild(div);
-      scrollToBottom();
-      return div;
-    }
-
-    window.sendQuick = function(text) {
-      inputEl.value = text;
-      sendMessage();
-    };
-
-    // Quick action buttons (CSP-safe)
-    document.querySelectorAll('#quickActions button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        sendQuick(btn.getAttribute('data-action') || '');
-      });
-    });
-
-    function sendMessage() {
-      let text = inputEl.value.trim();
-      if (!text) return;
-      // Append attached file contents
-      if (attachedFiles.length > 0) {
-        text += '\n\n[Context files attached:';
-        attachedFiles.forEach(f => { text += '\n- ' + f; });
-        text += ']';
-        // Tell backend to read these files
-        vscode.postMessage({ type: 'attachFiles', files: attachedFiles });
-        attachedFiles = [];
-        renderAttachedFiles();
-      }
-      if (welcomeEl) welcomeEl.style.display = 'none';
-      addMessage(escapeHtml(text), 'user-msg');
-      inputEl.value = '';
-      inputEl.style.height = 'auto';
-      sessionMessages++;
-      vscode.postMessage({ type: 'sendMessage', text });
-    }
-
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-
-    function extractCode(text) {
-      const match = text.match(/\`\`\`\\w*\\n([\\s\\S]*?)\\n\`\`\`/);
-      return match ? match[1] : null;
-    }
-
-    // Add context file button
-    addContextBtn.addEventListener('click', () => {
-      vscode.postMessage({ type: 'pickFile' });
-    });
-
-    // Token usage button
-    tokenUsageBtn.addEventListener('click', () => {
-      const existing = document.querySelector('.token-usage');
-      if (existing) { existing.remove(); return; }
-      const div = document.createElement('div');
-      div.className = 'token-usage';
-      const pct = totalTokensUsed > 0 ? Math.min((totalTokensUsed / 1000000) * 100, 100) : 0;
-      div.innerHTML = \`
-        <h4>📊 Token Usage — This Session</h4>
-        <div>Tokens used: <strong>\${totalTokensUsed.toLocaleString()}</strong></div>
-        <div>Messages: <strong>\${sessionMessages}</strong></div>
-        <div class="bar"><div class="bar-fill" style="width: \${pct}%"></div></div>
-        <div style="font-size:11px;color:var(--vscode-descriptionForeground)">
-          Context: MiMo V2 Pro — 131K tokens window
-        </div>
-        <div style="margin-top:8px">
-          <a href="https://platform.xiaomimimo.com/#/console/plan-manage" style="color:var(--vscode-textLink-foreground)">📊 Ver cuota restante en MiMo Platform</a>
-        </div>
-      \`;
-      messagesEl.insertBefore(div, messagesEl.firstChild);
-      scrollToBottom();
-    });
-
-    // Stop button
-    stopBtn.addEventListener('click', () => {
-      vscode.postMessage({ type: 'stopProcessing' });
-      stopBtn.style.display = 'none';
-      addMessage('⏹ Stopped by user.', 'assistant-msg');
-    });
-
-    // Listen for file picker response
-    window.addEventListener('message', (e) => {
-      const msg = e.data;
-      if (msg.type === 'filePicked') {
-        attachedFiles.push(msg.path);
-        renderAttachedFiles();
-      }
-    });
-
-    function renderAttachedFiles() {
-      attachedFilesEl.innerHTML = '';
-      attachedFiles.forEach((f, i) => {
-        const chip = document.createElement('span');
-        chip.className = 'attached-file';
-        const name = f.split(/[/\\]/).pop();
-        chip.textContent = name;
-        const removeBtn = document.createElement('button');
-        removeBtn.textContent = '\u00D7';
-        removeBtn.addEventListener('click', () => {
-          attachedFiles.splice(i, 1);
-          renderAttachedFiles();
-        });
-        chip.appendChild(removeBtn);
-        attachedFilesEl.appendChild(chip);
-      });
-    }
-
-    clearBtn.addEventListener('click', () => {
-      messagesEl.innerHTML = '';
-      vscode.postMessage({ type: 'clearHistory' });
-      const w = document.createElement('div');
-      w.className = 'welcome';
-      w.id = 'welcome';
-      w.innerHTML = document.querySelector('.welcome')?.innerHTML || '';
-      messagesEl.appendChild(w);
-    });
-
-    inputEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      }
-    });
-
-    inputEl.addEventListener('input', () => {
-      inputEl.style.height = 'auto';
-      inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
-    });
-
-    let currentAssistantDiv = null;
-
-    window.addEventListener('message', (e) => {
-      const msg = e.data;
-      switch (msg.type) {
-        case 'startStreaming':
-          currentAssistantDiv = addMessage('', 'assistant-msg');
-          stopBtn.style.display = 'flex';
-          break;
-        case 'assistantMessage':
-          if (currentAssistantDiv) {
-            currentAssistantDiv.innerHTML = renderMarkdown(msg.text);
-            const code = extractCode(msg.text);
-            if (code) {
-              const btn = document.createElement('button');
-              btn.className = 'insert-btn';
-              btn.textContent = '📋 Insert into editor';
-              btn.onclick = () => vscode.postMessage({ type: 'insertCode', code });
-              currentAssistantDiv.appendChild(btn);
-            }
-          }
-          scrollToBottom();
-          break;
-        case 'toolCall':
-          addMessage(msg.args, 'tool-msg');
-          break;
-        case 'toolResult':
-          addMessage('<div class="tool-result">' + escapeHtml(msg.result) + '</div>', 'tool-msg');
-          break;
-        case 'error':
-          addMessage('❌ ' + msg.text, 'error-msg');
-          break;
-        case 'tokenUsage':
-          totalTokensUsed += msg.total;
-          break;
-        case 'streamEnd':
-          currentAssistantDiv = null;
-          stopBtn.style.display = 'none';
-          inputEl.focus();
-          break;
-        case 'historyCleared':
-          totalTokensUsed = 0;
-          sessionMessages = 0;
-          break;
-      }
-    });
-
-    function renderMarkdown(text) {
-      return text
-        .replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\\n\`\`\`/g, '<pre><code>$2</code></pre>')
-        .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
-        .replace(/\\*\\*([^\\*]+)\\*\\*/g, '<strong>$1</strong>')
-        .replace(/\\n/g, '<br>');
-    }
-  </script>
+  <script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`;
   }

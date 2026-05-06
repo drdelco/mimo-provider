@@ -1,0 +1,525 @@
+(function () {
+  "use strict";
+
+  window.onerror = function(msg, src, line) {
+    document.body.insertAdjacentHTML("afterbegin",
+      '<div style="background:#5a1d1d;color:#f88;padding:8px;font-size:11px;font-family:monospace;">JS error: ' + msg + ' (line ' + line + ')</div>');
+  };
+
+  var vscode = acquireVsCodeApi();
+  var messagesEl = document.getElementById("messages");
+  var inputEl = document.getElementById("input");
+  var sendBtn = document.getElementById("sendBtn");
+  var addContextBtn = document.getElementById("addContextBtn");
+  var tokenUsageBtn = document.getElementById("tokenUsageBtn");
+  var stopBtn = document.getElementById("stopBtn");
+  var newChatBtn = document.getElementById("newChatBtn");
+  var attachedFilesEl = document.getElementById("attachedFiles");
+
+  let attachedFiles = [];
+  let totalTokensUsed = 0;
+  let sessionMessages = 0;
+  let currentAssistantDiv = null;
+
+  // ---- Feature 2: Smart scroll ----
+  // Track whether the user is scrolled to bottom (auto-scroll) or has scrolled up (reading)
+  let userScrolledUp = false;
+  const SCROLL_THRESHOLD = 80; // px from bottom to consider "at bottom"
+
+  function isNearBottom() {
+    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < SCROLL_THRESHOLD;
+  }
+
+  function scrollToBottom() {
+    if (!userScrolledUp) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  }
+
+  // Listen for user scroll — if they scroll up, pause auto-scroll
+  messagesEl.addEventListener("scroll", function () {
+    userScrolledUp = !isNearBottom();
+  });
+
+  // ---- Feature 1: Animated waiting text ----
+  let waitingInterval = null;
+  let waitingEl = null;
+  const WAITING_PHRASES = [
+    "Waiting for MiMo...",
+    "Looking for the answer...",
+    "Thinking through the problem...",
+    "Analyzing the codebase...",
+    "Exploring possibilities...",
+    "Crunching the data...",
+    "Connecting the dots...",
+    "Processing your request..."
+  ];
+  let waitingPhraseIndex = 0;
+
+  function startWaitingAnimation() {
+    stopWaitingAnimation();
+    waitingEl = document.createElement("div");
+    waitingEl.className = "message tool-msg waiting-indicator";
+    waitingEl.innerHTML = '<span class="waiting-dots"></span> ' + WAITING_PHRASES[0];
+    messagesEl.appendChild(waitingEl);
+    scrollToBottom();
+    waitingPhraseIndex = 0;
+    waitingInterval = setInterval(function () {
+      waitingPhraseIndex = (waitingPhraseIndex + 1) % WAITING_PHRASES.length;
+      if (waitingEl) {
+        waitingEl.innerHTML = '<span class="waiting-dots"></span> ' + WAITING_PHRASES[waitingPhraseIndex];
+      }
+    }, 2500);
+  }
+
+  function stopWaitingAnimation() {
+    if (waitingInterval) {
+      clearInterval(waitingInterval);
+      waitingInterval = null;
+    }
+    if (waitingEl) {
+      waitingEl.remove();
+      waitingEl = null;
+    }
+  }
+
+  // ---- Helpers ----
+
+  function addMessage(html, className) {
+    const div = document.createElement("div");
+    div.className = "message " + className;
+    div.innerHTML = html;
+    messagesEl.appendChild(div);
+    scrollToBottom();
+    return div;
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  // ---- Lightweight syntax highlighting ----
+  var HL_KEYWORDS = /\b(function|const|let|var|return|if|else|for|while|do|switch|case|break|continue|class|extends|import|export|from|default|new|this|typeof|instanceof|try|catch|finally|throw|async|await|yield|of|in|true|false|null|undefined|void|delete|super|static|get|set|def|self|elif|except|raise|with|as|lambda|pass|print|None|True|False|type|interface|enum|struct|impl|fn|pub|mod|use|match|loop|mut|ref|move|crate|where|trait)\b/g;
+  var HL_STRINGS = /(["'`])(?:(?!\1|\\).|\\.)*?\1/g;
+  var HL_COMMENTS_LINE = /(\/\/.*|#(?![\w{]).*)/g;
+  var HL_COMMENTS_BLOCK = /\/\*[\s\S]*?\*\//g;
+  var HL_NUMBERS = /\b(\d+\.?\d*(?:e[+-]?\d+)?|0x[0-9a-f]+)\b/gi;
+  var HL_TYPES = /\b([A-Z][a-zA-Z0-9_]*)\b/g;
+
+  function highlightCode(code) {
+    var placeholders = [];
+    function protect(match) {
+      placeholders.push(match);
+      return "\x00PH" + (placeholders.length - 1) + "\x00";
+    }
+    var s = code;
+    s = s.replace(HL_COMMENTS_BLOCK, function(m) { return protect('<span class="hl-comment">' + m + '</span>'); });
+    s = s.replace(HL_COMMENTS_LINE, function(m) { return protect('<span class="hl-comment">' + m + '</span>'); });
+    s = s.replace(HL_STRINGS, function(m) { return protect('<span class="hl-string">' + m + '</span>'); });
+    s = s.replace(HL_KEYWORDS, '<span class="hl-keyword">$1</span>');
+    s = s.replace(HL_NUMBERS, '<span class="hl-number">$1</span>');
+    s = s.replace(HL_TYPES, '<span class="hl-type">$1</span>');
+    s = s.replace(/\x00PH(\d+)\x00/g, function(_, i) { return placeholders[parseInt(i)]; });
+    return s;
+  }
+
+  function renderMarkdown(text) {
+    return text
+      .replace(/```(\w*)\n([\s\S]*?)\n```/g, function(_, lang, code) {
+        var highlighted = highlightCode(escapeHtml(code));
+        return '<div class="code-block"><button class="copy-btn" title="Copy code">Copy</button><pre><code class="lang-' + (lang || 'text') + '">' + highlighted + '</code></pre></div>';
+      })
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/~~([^~]+)~~/g, "<del>$1</del>")
+      .replace(/\n/g, "<br>");
+  }
+
+  function extractCode(text) {
+    var match = text.match(/```\w*\n([\s\S]*?)\n```/);
+    return match ? match[1] : null;
+  }
+
+  // ---- Feature 5: Paste image from clipboard ----
+  inputEl.addEventListener("paste", function (e) {
+    var items = (e.clipboardData || {}).items;
+    if (!items) return;
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (item.type.indexOf("image") === 0) {
+        e.preventDefault();
+        var blob = item.getAsFile();
+        var reader = new FileReader();
+        reader.onload = function (ev) {
+          var dataUrl = ev.target.result;
+          // Show preview in attached files area
+          showImagePreview(dataUrl);
+          // Send to extension host
+          vscode.postMessage({ type: "attachImage", dataUrl: dataUrl, caption: "[Screenshot pasted from clipboard]" });
+        };
+        reader.readAsDataURL(blob);
+        break;
+      }
+    }
+  });
+
+  function showImagePreview(dataUrl) {
+    var preview = document.createElement("div");
+    preview.className = "image-preview";
+    preview.innerHTML = '<img src="' + dataUrl + '" alt="Pasted screenshot"><button class="remove-img" title="Remove">&times;</button>';
+    preview.querySelector(".remove-img").addEventListener("click", function () {
+      preview.remove();
+    });
+    attachedFilesEl.appendChild(preview);
+  }
+
+  // ---- Send message ----
+
+  function sendMessage() {
+    var text = inputEl.value.trim();
+    if (!text) return;
+
+    if (attachedFiles.length > 0) {
+      text += "\n\n[Context files attached:";
+      attachedFiles.forEach(function (f) { text += "\n- " + f; });
+      text += "]";
+      vscode.postMessage({ type: "attachFiles", files: attachedFiles });
+      attachedFiles = [];
+      renderAttachedFiles();
+    }
+
+    var welcome = document.getElementById("welcome");
+    if (welcome) welcome.style.display = "none";
+
+    addMessage(escapeHtml(text), "user-msg");
+    inputEl.value = "";
+    inputEl.style.height = "auto";
+    sessionMessages++;
+    vscode.postMessage({ type: "sendMessage", text: text });
+  }
+
+  // ---- Quick actions ----
+
+  function sendQuick(text) {
+    inputEl.value = text;
+    sendMessage();
+  }
+
+  function bindQuickActions(container) {
+    var buttons = container.querySelectorAll("[data-action]");
+    buttons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        sendQuick(btn.getAttribute("data-action") || "");
+      });
+    });
+  }
+
+  // Bind initial quick actions
+  bindQuickActions(document);
+
+  // ---- Copy code button (delegated) ----
+  messagesEl.addEventListener("click", function (e) {
+    var btn = e.target;
+    if (!btn.classList || !btn.classList.contains("copy-btn")) return;
+    var codeEl = btn.parentElement && btn.parentElement.querySelector("pre code");
+    if (!codeEl) return;
+    var text = codeEl.textContent || "";
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = "Copied!";
+        setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+      });
+    } else {
+      vscode.postMessage({ type: "copyCode", code: text });
+      btn.textContent = "Copied!";
+      setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+    }
+  });
+
+  // ---- Attached files ----
+
+  function renderAttachedFiles() {
+    // Keep image previews, only rebuild file chips
+    var previews = attachedFilesEl.querySelectorAll(".image-preview");
+    attachedFilesEl.innerHTML = "";
+    // Re-add image previews
+    previews.forEach(function (p) { attachedFilesEl.appendChild(p); });
+    // Add file chips
+    attachedFiles.forEach(function (f, i) {
+      var chip = document.createElement("span");
+      chip.className = "attached-file";
+      var parts = f.split(/[/\\]/);
+      chip.textContent = parts[parts.length - 1];
+      var removeBtn = document.createElement("button");
+      removeBtn.textContent = "\u00D7";
+      removeBtn.addEventListener("click", function () {
+        attachedFiles.splice(i, 1);
+        renderAttachedFiles();
+      });
+      chip.appendChild(removeBtn);
+      attachedFilesEl.appendChild(chip);
+    });
+  }
+
+  // ---- Event listeners ----
+
+  // Send on Enter
+  inputEl.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      sendMessage();
+    }
+  });
+
+  // Auto-resize textarea
+  inputEl.addEventListener("input", function () {
+    inputEl.style.height = "auto";
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 150) + "px";
+  });
+
+  // Send button
+  sendBtn.addEventListener("click", function () {
+    sendMessage();
+  });
+
+  // Attach file
+  addContextBtn.addEventListener("click", function () {
+    vscode.postMessage({ type: "pickFile" });
+  });
+
+  // Token usage — toggle panel at the bottom of messages
+  if (tokenUsageBtn) {
+    tokenUsageBtn.addEventListener("click", function () {
+      var existing = document.querySelector(".token-usage");
+      if (existing) { existing.remove(); return; }
+      var div = document.createElement("div");
+      div.className = "message token-usage";
+      div.innerHTML =
+        "<h4>Token Usage</h4>" +
+        "<div>Tokens used: <strong>" + totalTokensUsed.toLocaleString() + "</strong></div>" +
+        "<div>Messages: <strong>" + sessionMessages + "</strong></div>" +
+        '<div style="margin-top:8px;font-size:11px">' +
+        '<a href="https://platform.xiaomimimo.com/#/console/plan-manage" ' +
+        'style="color:var(--vscode-textLink-foreground)">View quota on MiMo Platform</a></div>';
+      messagesEl.appendChild(div);
+      scrollToBottom();
+    });
+  }
+
+  // Stop
+  stopBtn.addEventListener("click", function () {
+    vscode.postMessage({ type: "stopProcessing" });
+    stopBtn.style.display = "none";
+    stopWaitingAnimation();
+    addMessage("Stopped by user.", "assistant-msg");
+  });
+
+  // New chat
+  var welcomeTemplate = "";
+  var welcomeEl = document.getElementById("welcome");
+  if (welcomeEl) welcomeTemplate = welcomeEl.innerHTML;
+
+  // New tab button
+  var newTabBtn = document.getElementById("newTabBtn");
+  if (newTabBtn) {
+    newTabBtn.addEventListener("click", function () {
+      vscode.postMessage({ type: "openNewTab" });
+    });
+  }
+
+  // Model selector — request models from extension on init
+  var modelSelect = document.getElementById("modelSelect");
+  if (modelSelect) {
+    modelSelect.addEventListener("change", function () {
+      vscode.postMessage({ type: "setModel", model: modelSelect.value });
+    });
+    // Request dynamic model list from extension host
+    vscode.postMessage({ type: "fetchModels" });
+  }
+
+  // Export chat
+  var exportBtn = document.getElementById("exportBtn");
+  if (exportBtn) {
+    exportBtn.addEventListener("click", function () {
+      vscode.postMessage({ type: "exportChat" });
+    });
+  }
+
+  // Clear chat — with confirmation
+  newChatBtn.addEventListener("click", function () {
+    if (sessionMessages > 0 && !confirm("Clear this conversation? All history will be lost.")) {
+      return;
+    }
+    messagesEl.innerHTML = "";
+    vscode.postMessage({ type: "clearHistory" });
+    var w = document.createElement("div");
+    w.className = "welcome";
+    w.id = "welcome";
+    w.innerHTML = welcomeTemplate;
+    messagesEl.appendChild(w);
+    bindQuickActions(w);
+  });
+
+  // ---- Messages from extension host ----
+
+  window.addEventListener("message", function (e) {
+    var msg = e.data;
+    switch (msg.type) {
+      case "init":
+        vscode.setState({ tabId: msg.tabId });
+        break;
+
+      case "restored":
+        var welcome = document.getElementById("welcome");
+        if (welcome) welcome.style.display = "none";
+        if (msg.messages && msg.messages.length > 0) {
+          msg.messages.forEach(function (m) {
+            if (m.role === "user") {
+              addMessage(escapeHtml(m.content), "user-msg");
+            } else if (m.role === "assistant") {
+              addMessage(renderMarkdown(m.content), "assistant-msg");
+            }
+            sessionMessages++;
+          });
+          addMessage("Session restored — conversation history above, context preserved.", "tool-msg");
+        }
+        break;
+
+      case "filePicked":
+        attachedFiles.push(msg.path);
+        renderAttachedFiles();
+        break;
+
+      case "startStreaming":
+        currentAssistantDiv = null;
+        stopBtn.style.display = "flex";
+        startWaitingAnimation();
+        break;
+
+      case "step":
+        // Visible step indicator — update waiting animation text
+        if (waitingEl) {
+          waitingEl.innerHTML = '<span class="waiting-dots"></span> ' + msg.text;
+        }
+        break;
+
+      case "assistantMessage":
+        stopWaitingAnimation();
+        currentAssistantDiv = addMessage(renderMarkdown(msg.text), "assistant-msg");
+        var code = extractCode(msg.text);
+        if (code) {
+          var btn = document.createElement("button");
+          btn.className = "insert-btn";
+          btn.textContent = "Insert into editor";
+          btn.onclick = function () { vscode.postMessage({ type: "insertCode", code: code }); };
+          currentAssistantDiv.appendChild(btn);
+        }
+        scrollToBottom();
+        break;
+
+      case "streamStart":
+        stopWaitingAnimation();
+        currentAssistantDiv = addMessage("", "assistant-msg");
+        break;
+
+      case "stream":
+        stopWaitingAnimation();
+        if (currentAssistantDiv) {
+          if (!currentAssistantDiv._rawText) currentAssistantDiv._rawText = "";
+          currentAssistantDiv._rawText += msg.text;
+          currentAssistantDiv.innerHTML = renderMarkdown(currentAssistantDiv._rawText);
+        } else {
+          currentAssistantDiv = addMessage(renderMarkdown(msg.text), "assistant-msg");
+          currentAssistantDiv._rawText = msg.text;
+        }
+        scrollToBottom();
+        break;
+
+      case "assistantDone":
+        if (currentAssistantDiv && currentAssistantDiv._rawText) {
+          var code = extractCode(currentAssistantDiv._rawText);
+          if (code) {
+            var btn = document.createElement("button");
+            btn.className = "insert-btn";
+            btn.textContent = "Insert into editor";
+            btn.onclick = function () { vscode.postMessage({ type: "insertCode", code: code }); };
+            currentAssistantDiv.appendChild(btn);
+          }
+        }
+        currentAssistantDiv = null;
+        break;
+
+      case "toolCall":
+        stopWaitingAnimation();
+        addMessage(escapeHtml(msg.args), "tool-msg");
+        break;
+
+      case "toolResult":
+        addMessage('<div class="tool-result">' + escapeHtml(msg.result) + "</div>", "tool-msg");
+        break;
+
+      case "error":
+        stopWaitingAnimation();
+        addMessage(escapeHtml(msg.text), "error-msg");
+        break;
+
+      case "tokenUsage":
+        totalTokensUsed += msg.total;
+        break;
+
+      case "streamEnd":
+        stopWaitingAnimation();
+        currentAssistantDiv = null;
+        stopBtn.style.display = "none";
+        var cleanEl = document.getElementById("stepIndicator");
+        if (cleanEl) cleanEl.remove();
+        inputEl.focus();
+        break;
+
+      case "historyCleared":
+        totalTokensUsed = 0;
+        sessionMessages = 0;
+        break;
+
+      // Feature 3: Dynamic model list from API
+      case "modelsLoaded":
+        if (modelSelect && msg.models && msg.models.length > 0) {
+          var currentVal = modelSelect.value;
+          modelSelect.innerHTML = '<option value="auto">Auto</option>';
+          msg.models.forEach(function (m) {
+            var opt = document.createElement("option");
+            opt.value = m.value;
+            opt.textContent = m.label;
+            modelSelect.appendChild(opt);
+          });
+          // Restore selection if still valid
+          if (currentVal) modelSelect.value = currentVal;
+        }
+        break;
+
+      // Feature 5: Image attached confirmation
+      case "imageAttached":
+        // Preview already shown via paste handler
+        break;
+
+      // Clear image thumbnails after they've been consumed by the API
+      case "clearImages":
+        var previews = attachedFilesEl.querySelectorAll(".image-preview");
+        previews.forEach(function (p) { p.remove(); });
+        break;
+
+      // Feature 6: Festive summary for long tasks
+      case "festiveSummary":
+        var festDiv = document.createElement("div");
+        festDiv.className = "message festive-msg";
+        festDiv.innerHTML = msg.html;
+        messagesEl.appendChild(festDiv);
+        scrollToBottom();
+        break;
+    }
+  });
+})();

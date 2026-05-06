@@ -43,9 +43,9 @@ export class ClaudeProvider implements AICodingProvider {
   readonly models = CLAUDE_MODELS;
 
   private getConfig(): ProviderConfig {
-    const config = vscode.workspace.getConfiguration('claude');
-    const inspectKey = config.inspect<string>('apiKey');
-    const inspectUrl = config.inspect<string>('baseUrl');
+    const config = vscode.workspace.getConfiguration('mimo');
+    const inspectKey = config.inspect<string>('claudeApiKey');
+    const inspectUrl = config.inspect<string>('claudeBaseUrl');
     return {
       apiKey: inspectKey?.workspaceValue || inspectKey?.globalValue || '',
       baseUrl: inspectUrl?.workspaceValue || inspectUrl?.globalValue || 'https://api.anthropic.com/v1',

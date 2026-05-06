@@ -6,3 +6,9 @@ tsconfig.json
 **/*.map
 mimo-original-logo.png
 icon.svg
+test-*
+*.txt
+.claude/**
+BRIEFING.md
+CLAUDE.md
+kimi-install.sh

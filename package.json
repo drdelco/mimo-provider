@@ -1,9 +1,9 @@
 {
   "name": "mimo-provider",
-  "displayName": "AI Orchestra — Multi-Provider Coding Agent",
-  "description": "Multi-provider AI coding agent with orchestration. Supports MiMo, Kimi, DeepSeek, and Claude with autonomous multi-agent collaboration.",
-  "version": "0.2.0",
-  "publisher": "alvi-ngclinicas",
+  "displayName": "MiMonster Orchestra",
+  "description": "Multi-agent AI coding assistant. Single-agent chat with MiMo, Kimi, DeepSeek, MiniMax, and Claude — plus autonomous multi-agent orchestration with planning, parallel execution, security review, and inter-agent messaging.",
+  "version": "1.2.0",
+  "publisher": "drdelco",
   "icon": "icon.png",
   "repository": {
     "type": "git",
@@ -13,9 +13,32 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["AI", "Other"],
-  "keywords": ["mimo", "xiaomi", "kimi", "deepseek", "claude", "ai", "language-model", "chat", "antigravity", "llm", "coding-assistant", "orchestra", "multi-agent"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "mimo",
+    "xiaomi",
+    "kimi",
+    "moonshot",
+    "deepseek",
+    "minimax",
+    "claude",
+    "anthropic",
+    "ai",
+    "language-model",
+    "chat",
+    "antigravity",
+    "llm",
+    "coding-assistant",
+    "orchestra",
+    "multi-agent",
+    "agent"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "icons": {
@@ -31,7 +54,7 @@
       "activitybar": [
         {
           "id": "mimo-sidebar",
-          "title": "AI Orchestra",
+          "title": "MiMonster Orchestra",
           "icon": "activity-icon.png"
         }
       ]
@@ -55,80 +78,75 @@
         "vendor": "mimo",
         "displayName": "Xiaomi MiMo",
         "managementCommand": "mimo.manage"
-      },
-      {
-        "vendor": "kimi",
-        "displayName": "Moonshot Kimi",
-        "managementCommand": "kimi.manage"
-      },
-      {
-        "vendor": "deepseek",
-        "displayName": "DeepSeek",
-        "managementCommand": "deepseek.manage"
-      },
-      {
-        "vendor": "claude",
-        "displayName": "Anthropic Claude",
-        "managementCommand": "claude.manage"
       }
     ],
     "chatParticipants": [
       {
         "id": "mimo",
         "name": "MiMo",
-        "description": "Xiaomi MiMo AI coding assistant",
+        "description": "MiMonster — single-agent coding assistant",
         "isSticky": true,
         "isDefault": true
       },
       {
         "id": "orchestra",
         "name": "Orchestra",
-        "description": "Multi-agent AI orchestration — Kimi plans, MiMo codes, Claude reviews",
+        "description": "Multi-agent AI orchestration — architect plans, agents execute in parallel, security reviews",
         "isSticky": false
       }
     ],
     "commands": [
       {
         "command": "mimo.manage",
-        "title": "MiMo: Configure API Key"
+        "title": "MiMonster: Configure API Key"
       },
       {
         "command": "mimo.test",
-        "title": "MiMo: Test Connection"
+        "title": "MiMonster: Test Connection"
       },
       {
         "command": "mimo.openChat",
-        "title": "AI: Open Chat Panel",
+        "title": "MiMonster: Open Chat Panel",
         "icon": "$(mimo-logo)"
       },
       {
         "command": "mimo.newChat",
-        "title": "AI: New Chat"
+        "title": "MiMonster: New Chat"
       },
       {
         "command": "mimo.clearHistory",
-        "title": "AI: Clear Chat History"
+        "title": "MiMonster: Clear Chat History"
       },
       {
-        "command": "kimi.manage",
-        "title": "Kimi: Configure API Key"
+        "command": "mimo.loginKimi",
+        "title": "MiMonster: Login to Kimi (Moonshot)",
+        "icon": "$(sign-in)"
       },
       {
-        "command": "deepseek.manage",
-        "title": "DeepSeek: Configure API Key"
+        "command": "mimo.loginMiniMax",
+        "title": "MiMonster: Login to MiniMax",
+        "icon": "$(sign-in)"
       },
       {
-        "command": "claude.manage",
-        "title": "Claude: Configure API Key"
+        "command": "mimo.logoutKimi",
+        "title": "MiMonster: Logout from Kimi"
+      },
+      {
+        "command": "mimo.logoutMiniMax",
+        "title": "MiMonster: Logout from MiniMax"
+      },
+      {
+        "command": "mimo.oauthStatus",
+        "title": "MiMonster: OAuth Login Status"
       },
       {
         "command": "orchestra.execute",
-        "title": "🎼 Orchestra: Execute Complex Task",
+        "title": "Orchestra: Execute Complex Task",
         "icon": "$(mimo-logo)"
       },
       {
         "command": "orchestra.status",
-        "title": "Orchestra: Show Status"
+        "title": "Orchestra: Show Provider Status"
       }
     ],
     "menus": {
@@ -146,48 +164,75 @@
       ]
     },
     "configuration": {
-      "title": "AI Orchestra — Multi-Provider Settings",
+      "title": "MiMonster Orchestra",
       "properties": {
         "mimo.apiKey": {
           "type": "string",
           "default": "",
-          "description": "MiMo API Key (Token Plan or SK)",
-          "scope": "application"
+          "description": "MiMo API Key"
         },
         "mimo.baseUrl": {
           "type": "string",
           "default": "https://token-plan-ams.xiaomimimo.com/v1",
           "description": "MiMo API base URL"
         },
-        "kimi.apiKey": {
+        "mimo.useFlashForSimpleTasks": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use MiMo V2 Flash for simple tool calls (read, search, list). Only enable if your plan includes Flash."
+        },
+        "mimo.webSearch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use Xiaomi's native Web Search plugin (requires it to be enabled at platform.xiaomimimo.com > Plugin Management). When disabled, uses free DuckDuckGo-based local search as fallback."
+        },
+        "mimo.preferredModel": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "mimo-v2-pro",
+            "mimo-v2-flash"
+          ],
+          "description": "Preferred model for single-agent chat. Auto selects Pro for complex tasks and Flash for simple tool calls."
+        },
+        "mimo.deepseekApiKey": {
           "type": "string",
           "default": "",
-          "description": "Moonshot Kimi API Key",
-          "scope": "application"
+          "description": "DeepSeek API Key (get one at platform.deepseek.com)"
         },
-        "kimi.baseUrl": {
+        "mimo.deepseekBaseUrl": {
           "type": "string",
-          "default": "https://api.moonshot.cn/v1",
-          "description": "Kimi API base URL"
-        },
-        "deepseek.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "DeepSeek API Key",
-          "scope": "application"
-        },
-        "deepseek.baseUrl": {
-          "type": "string",
-          "default": "https://api.deepseek.com/v1",
+          "default": "https://api.deepseek.com",
           "description": "DeepSeek API base URL"
         },
-        "claude.apiKey": {
+        "mimo.kimiApiKey": {
           "type": "string",
           "default": "",
-          "description": "Anthropic Claude API Key",
+          "description": "Kimi (Moonshot) API Key (get one at platform.moonshot.cn)"
+        },
+        "mimo.kimiBaseUrl": {
+          "type": "string",
+          "default": "https://api.moonshot.cn/v1",
+          "description": "Kimi (Moonshot) API base URL"
+        },
+        "mimo.minimaxApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "MiniMax API Key (get one at platform.minimax.io)"
+        },
+        "mimo.minimaxBaseUrl": {
+          "type": "string",
+          "default": "https://api.minimax.io/v1",
+          "description": "MiniMax API base URL"
+        },
+        "mimo.claudeApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic Claude API Key (used by Orchestra for security review)",
           "scope": "application"
         },
-        "claude.baseUrl": {
+        "mimo.claudeBaseUrl": {
           "type": "string",
           "default": "https://api.anthropic.com/v1",
           "description": "Claude API base URL"
@@ -200,18 +245,18 @@
         "orchestra.director": {
           "type": "string",
           "default": "kimi",
-          "enum": ["kimi", "claude", "mimo"],
-          "description": "Which model acts as the director/architect"
+          "enum": ["kimi", "claude", "mimo", "minimax"],
+          "description": "Which model acts as the architect/director (planning phase)"
         },
         "orchestra.budgetLimit": {
           "type": "number",
           "default": 5.0,
-          "description": "Maximum budget per orchestration (USD)"
+          "description": "Maximum budget per orchestration in USD"
         },
         "orchestra.autoFallback": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically fallback to available providers if primary fails"
+          "description": "If a provider fails on a work order, automatically retry with the next preferred provider for that role"
         },
         "orchestra.poolLimits": {
           "type": "object",
@@ -219,9 +264,15 @@
             "kimi": 300,
             "deepseek": 50,
             "mimo": 10,
+            "minimax": 20,
             "claude": 5
           },
           "description": "Maximum concurrent agent instances per provider. Kimi supports up to 300; Claude is rate-limited."
+        },
+        "orchestra.skipSecurityReview": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip the mandatory security review phase. Not recommended."
         }
       }
     }

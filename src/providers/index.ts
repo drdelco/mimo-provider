@@ -3,4 +3,5 @@ export { AICodingProvider, AIModel, ChatMessage, ChatOptions, ChatChunk, ToolDef
 export { MiMoProvider } from './MiMoProvider';
 export { KimiProvider } from './KimiProvider';
 export { DeepSeekProvider } from './DeepSeekProvider';
+export { MiniMaxProvider } from './MiniMaxProvider';
 export { ClaudeProvider } from './ClaudeProvider';

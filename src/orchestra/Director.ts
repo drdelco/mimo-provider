@@ -23,6 +23,7 @@ import { MiMoProvider } from '../providers/MiMoProvider';
 import { KimiProvider } from '../providers/KimiProvider';
 import { DeepSeekProvider } from '../providers/DeepSeekProvider';
 import { ClaudeProvider } from '../providers/ClaudeProvider';
+import { MiniMaxProvider } from '../providers/MiniMaxProvider';
 import { AgentExecutor, AgentEvent } from './AgentExecutor';
 import { AgentPool } from './AgentPool';
 import { AgentMailbox, AgentMessage } from './Mailbox';
@@ -84,13 +85,13 @@ export type DirectorEvent =
 
 export class TaskRouter {
   private agentRoles: Map<AgentRole, string[]> = new Map([
-    ['architect', ['kimi', 'claude', 'mimo']],
-    ['coder',     ['mimo', 'deepseek', 'kimi']],
-    ['reviewer',  ['claude', 'kimi', 'mimo']],
-    ['security',  ['claude', 'kimi', 'mimo']],
-    ['optimizer', ['deepseek', 'mimo', 'kimi']],
-    ['debugger',  ['mimo', 'claude', 'deepseek']],
-    ['tester',    ['mimo', 'deepseek', 'kimi']]
+    ['architect', ['kimi', 'claude', 'minimax', 'mimo']],
+    ['coder',     ['mimo', 'minimax', 'deepseek', 'kimi']],
+    ['reviewer',  ['claude', 'kimi', 'minimax', 'mimo']],
+    ['security',  ['claude', 'kimi', 'minimax', 'mimo']],
+    ['optimizer', ['deepseek', 'mimo', 'minimax', 'kimi']],
+    ['debugger',  ['mimo', 'claude', 'deepseek', 'minimax']],
+    ['tester',    ['mimo', 'minimax', 'deepseek', 'kimi']]
   ]);
 
   selectProvider(role: AgentRole, available: AICodingProvider[]): AICodingProvider | undefined {
@@ -199,6 +200,7 @@ export class CodingDirector {
     this.factory.register(new MiMoProvider());
     this.factory.register(new KimiProvider());
     this.factory.register(new DeepSeekProvider());
+    this.factory.register(new MiniMaxProvider());
     this.factory.register(new ClaudeProvider());
 
     // Pipe mailbox messages to event listener for the UI + vector memory

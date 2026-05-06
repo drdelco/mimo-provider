@@ -1,32 +1,23 @@
 /**
- * DeepSeek Provider
- * Cost-effective coding model with excellent reasoning
+ * MiniMax Provider — OpenAI-compatible chat completions API.
+ *
+ * Uses the same `mimo.minimaxApiKey` / `mimo.minimaxBaseUrl` settings that
+ * the single-agent MiMoProvider uses, so users only configure once.
+ *
+ * Default model: MiniMax-M1 (long-context reasoning model).
  */
 
 import * as vscode from 'vscode';
 import { AICodingProvider, AIModel, ChatMessage, ChatOptions, ChatChunk, ProviderConfig } from './BaseProvider';
 
-const DEEPSEEK_MODELS: AIModel[] = [
+const MINIMAX_MODELS: AIModel[] = [
   {
-    id: 'deepseek-v4-flash',
-    name: 'DeepSeek V4 Flash',
-    family: 'deepseek',
-    maxInputTokens: 1048576,
-    maxOutputTokens: 384000,
-    description: 'DeepSeek V4 Flash — fast and cost-effective',
-    capabilities: {
-      imageInput: false,
-      toolCalling: true,
-      streaming: true
-    }
-  },
-  {
-    id: 'deepseek-v4-pro',
-    name: 'DeepSeek V4 Pro',
-    family: 'deepseek',
-    maxInputTokens: 1048576,
-    maxOutputTokens: 384000,
-    description: 'DeepSeek V4 Pro — advanced reasoning',
+    id: 'MiniMax-M1',
+    name: 'MiniMax M1',
+    family: 'minimax',
+    maxInputTokens: 1_000_000,
+    maxOutputTokens: 40_000,
+    description: 'MiniMax M1 — 1M context reasoning model',
     capabilities: {
       imageInput: false,
       toolCalling: true,
@@ -35,13 +26,12 @@ const DEEPSEEK_MODELS: AIModel[] = [
   }
 ];
 
-// Cost per 1M tokens in USD
-const DEEPSEEK_COSTS = {
-  'deepseek-v4-flash': { input: 0.14, output: 0.28, cacheRead: 0.028, cacheWrite: 0.14 },
-  'deepseek-v4-pro': { input: 1.74, output: 3.48, cacheRead: 0.145, cacheWrite: 1.74 }
+// Cost per 1M tokens in USD (approximate; MiniMax often free tier or near-free)
+const MINIMAX_COSTS: Record<string, { input: number; output: number }> = {
+  'MiniMax-M1': { input: 0.40, output: 2.20 }
 };
 
-interface DeepSeekRequestBody {
+interface MiniMaxRequestBody {
   model: string;
   messages: ChatMessage[];
   stream: boolean;
@@ -50,18 +40,18 @@ interface DeepSeekRequestBody {
   tools?: any[];
 }
 
-export class DeepSeekProvider implements AICodingProvider {
-  readonly name = 'deepseek';
-  readonly displayName = 'DeepSeek';
-  readonly models = DEEPSEEK_MODELS;
+export class MiniMaxProvider implements AICodingProvider {
+  readonly name = 'minimax';
+  readonly displayName = 'MiniMax';
+  readonly models = MINIMAX_MODELS;
 
   private getConfig(): ProviderConfig {
     const config = vscode.workspace.getConfiguration('mimo');
-    const inspectKey = config.inspect<string>('deepseekApiKey');
-    const inspectUrl = config.inspect<string>('deepseekBaseUrl');
+    const inspectKey = config.inspect<string>('minimaxApiKey');
+    const inspectUrl = config.inspect<string>('minimaxBaseUrl');
     return {
       apiKey: inspectKey?.workspaceValue || inspectKey?.globalValue || '',
-      baseUrl: inspectUrl?.workspaceValue || inspectUrl?.globalValue || 'https://api.deepseek.com/v1',
+      baseUrl: inspectUrl?.workspaceValue || inspectUrl?.globalValue || 'https://api.minimax.io/v1',
       timeout: 120000
     };
   }
@@ -69,13 +59,15 @@ export class DeepSeekProvider implements AICodingProvider {
   async isAvailable(): Promise<boolean> {
     const config = this.getConfig();
     if (!config.apiKey) return false;
-    
     try {
+      // MiniMax uses OpenAI-compatible /models endpoint
       const response = await fetch(`${config.baseUrl}/models`, {
         headers: { 'Authorization': `Bearer ${config.apiKey}` },
         signal: AbortSignal.timeout(10000)
       });
-      return response.ok;
+      // Some endpoints return 404 for /models but accept /chat/completions —
+      // treat 404 as "configured" (we'll find out on first chat call)
+      return response.ok || response.status === 404;
     } catch {
       return false;
     }
@@ -84,10 +76,10 @@ export class DeepSeekProvider implements AICodingProvider {
   async *chat(options: ChatOptions): AsyncGenerator<ChatChunk, void, unknown> {
     const config = this.getConfig();
     if (!config.apiKey) {
-      throw new Error('DeepSeek API Key no configurada.');
+      throw new Error('MiniMax API Key not configured.');
     }
 
-    const body: DeepSeekRequestBody = {
+    const body: MiniMaxRequestBody = {
       model: options.model,
       messages: options.messages,
       stream: options.stream ?? true,
@@ -95,7 +87,7 @@ export class DeepSeekProvider implements AICodingProvider {
       temperature: options.temperature ?? 0.7
     };
 
-    if (options.tools) {
+    if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(t => ({
         type: 'function',
         function: {
@@ -118,7 +110,7 @@ export class DeepSeekProvider implements AICodingProvider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`DeepSeek API error ${response.status}: ${errorText}`);
+      throw new Error(`MiniMax API error ${response.status}: ${errorText}`);
     }
 
     if (!options.stream) {
@@ -168,7 +160,10 @@ export class DeepSeekProvider implements AICodingProvider {
               done: false,
               toolCalls: delta.tool_calls.map((tc: any) => ({
                 id: tc.id || '',
-                function: { name: tc.function?.name || '', arguments: tc.function?.arguments || '' }
+                function: {
+                  name: tc.function?.name || '',
+                  arguments: tc.function?.arguments || ''
+                }
               }))
             };
           }
@@ -182,7 +177,7 @@ export class DeepSeekProvider implements AICodingProvider {
   }
 
   estimateCost(inputTokens: number, outputTokens: number, modelId: string): number {
-    const costs = DEEPSEEK_COSTS[modelId as keyof typeof DEEPSEEK_COSTS];
+    const costs = MINIMAX_COSTS[modelId];
     if (!costs) return 0;
     return (inputTokens * costs.input + outputTokens * costs.output) / 1_000_000;
   }

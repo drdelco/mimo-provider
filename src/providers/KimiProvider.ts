@@ -42,9 +42,9 @@ export class KimiProvider implements AICodingProvider {
   readonly models = KIMI_MODELS;
 
   private getConfig(): ProviderConfig {
-    const config = vscode.workspace.getConfiguration('kimi');
-    const inspectKey = config.inspect<string>('apiKey');
-    const inspectUrl = config.inspect<string>('baseUrl');
+    const config = vscode.workspace.getConfiguration('mimo');
+    const inspectKey = config.inspect<string>('kimiApiKey');
+    const inspectUrl = config.inspect<string>('kimiBaseUrl');
     return {
       apiKey: inspectKey?.workspaceValue || inspectKey?.globalValue || '',
       baseUrl: inspectUrl?.workspaceValue || inspectUrl?.globalValue || 'https://api.moonshot.cn/v1',
