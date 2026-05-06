@@ -212,6 +212,16 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically fallback to available providers if primary fails"
+        },
+        "orchestra.poolLimits": {
+          "type": "object",
+          "default": {
+            "kimi": 300,
+            "deepseek": 50,
+            "mimo": 10,
+            "claude": 5
+          },
+          "description": "Maximum concurrent agent instances per provider. Kimi supports up to 300; Claude is rate-limited."
         }
       }
     }

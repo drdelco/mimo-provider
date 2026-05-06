@@ -108,7 +108,7 @@ export class KimiProvider implements AICodingProvider {
     }
 
     if (!options.stream) {
-      const data = await response.json();
+      const data = await response.json() as any;
       yield {
         content: data.choices?.[0]?.message?.content || '',
         done: true

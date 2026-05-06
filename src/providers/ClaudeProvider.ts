@@ -121,7 +121,7 @@ export class ClaudeProvider implements AICodingProvider {
     }
 
     if (!options.stream) {
-      const data = await response.json();
+      const data = await response.json() as any;
       yield {
         content: data.content?.[0]?.text || '',
         done: true

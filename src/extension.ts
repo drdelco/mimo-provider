@@ -10,6 +10,7 @@ import { DeepSeekProvider } from './providers/DeepSeekProvider';
 import { ClaudeProvider } from './providers/ClaudeProvider';
 import { ProviderFactory } from './providers/BaseProvider';
 import { CodingDirector } from './orchestra/Director';
+import { AgentPool, DEFAULT_LIMITS } from './orchestra/AgentPool';
 import { MiMoChatParticipant } from './chat';
 import { MiMoChatViewProvider } from './webview';
 
@@ -101,7 +102,11 @@ export function activate(context: vscode.ExtensionContext) {
       if (!request) return;
 
       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
-      const director = new CodingDirector(workspaceRoot);
+      const orchestraConfig = vscode.workspace.getConfiguration('orchestra');
+      const poolLimits = orchestraConfig.get<Record<string, number>>('poolLimits') ?? DEFAULT_LIMITS;
+      const budget = orchestraConfig.get<number>('budgetLimit') ?? 5.0;
+      const pool = new AgentPool(poolLimits);
+      const director = new CodingDirector(workspaceRoot, budget, pool);
 
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -359,15 +364,19 @@ function showOrchestraResult(result: any) {
           <div class="stat-value">${(result.totalDuration / 1000).toFixed(1)}s</div>
         </div>
       </div>
-      <h2>Subtasks</h2>
+      <h2>Subtasks (${result.results.length} agents executed)</h2>
       ${result.results.map((r: any) => `
         <div class="subtask ${r.success ? 'success' : 'error'}">
-          <strong>${r.subtaskId}</strong> — ${r.success ? '✅ Success' : '❌ Failed'}
-          <br><small>Agent: ${result.plan.subtasks.find((s: any) => s.id === r.subtaskId)?.agent || 'unknown'}</small>
+          <strong>${r.agentId}</strong> — ${r.success ? '✅ Success' : '❌ Failed'} · ${r.iterations} iterations
+          <br><small>Subtask: ${r.subtaskId} | Role: ${r.role}</small>
+          <br><small>Tools: ${r.toolsUsed.length > 0 ? r.toolsUsed.join(', ') : 'none'}</small>
+          <br><small>Files read: ${r.filesRead.join(', ') || 'none'} | Modified: ${r.filesModified.join(', ') || 'none'}</small>
           <br><small>Tokens: ${r.tokensUsed.toLocaleString()} | Cost: $${r.cost.toFixed(4)} | Time: ${(r.duration / 1000).toFixed(1)}s</small>
           <pre><code>${escapeHtml(r.output.substring(0, 500))}${r.output.length > 500 ? '...' : ''}</code></pre>
         </div>
       `).join('')}
+      <h2>Pool usage (peak concurrency)</h2>
+      <pre><code>${escapeHtml(JSON.stringify(result.poolUsage, null, 2))}</code></pre>
       <h2>Final Output</h2>
       <pre><code>${escapeHtml(result.finalOutput)}</code></pre>
     </body>

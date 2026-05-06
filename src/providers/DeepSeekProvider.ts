@@ -122,10 +122,12 @@ export class DeepSeekProvider implements AICodingProvider {
     }
 
     if (!options.stream) {
-      const data = await response.json();
+      const data = await response.json() as any;
+      const msg = data.choices?.[0]?.message;
       yield {
-        content: data.choices?.[0]?.message?.content || '',
-        done: true
+        content: msg?.content || '',
+        done: true,
+        toolCalls: msg?.tool_calls
       };
       return;
     }
@@ -156,9 +158,19 @@ export class DeepSeekProvider implements AICodingProvider {
 
         try {
           const parsed = JSON.parse(data);
-          const content = parsed.choices?.[0]?.delta?.content;
-          if (content) {
-            yield { content, done: false };
+          const delta = parsed.choices?.[0]?.delta;
+          if (delta?.content) {
+            yield { content: delta.content, done: false };
+          }
+          if (delta?.tool_calls) {
+            yield {
+              content: '',
+              done: false,
+              toolCalls: delta.tool_calls.map((tc: any) => ({
+                id: tc.id || '',
+                function: { name: tc.function?.name || '', arguments: tc.function?.arguments || '' }
+              }))
+            };
           }
         } catch {
           // Skip malformed JSON

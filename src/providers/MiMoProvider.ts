@@ -41,6 +41,7 @@ interface MiMoRequestBody {
   stream: boolean;
   max_tokens?: number;
   temperature?: number;
+  tools?: any[];
 }
 
 export class MiMoProvider implements AICodingProvider, vscode.LanguageModelChatProvider {
@@ -90,6 +91,10 @@ export class MiMoProvider implements AICodingProvider, vscode.LanguageModelChatP
       temperature: options.temperature ?? 0.7
     };
 
+    if (options.tools && options.tools.length > 0) {
+      body.tools = options.tools;
+    }
+
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -106,10 +111,12 @@ export class MiMoProvider implements AICodingProvider, vscode.LanguageModelChatP
     }
 
     if (!options.stream) {
-      const data = await response.json();
+      const data = await response.json() as any;
+      const msg = data.choices?.[0]?.message;
       yield {
-        content: data.choices?.[0]?.message?.content || '',
-        done: true
+        content: msg?.content || '',
+        done: true,
+        toolCalls: msg?.tool_calls
       };
       return;
     }
@@ -134,13 +141,29 @@ export class MiMoProvider implements AICodingProvider, vscode.LanguageModelChatP
         if (!trimmed || !trimmed.startsWith('data: ')) continue;
 
         const data = trimmed.slice(6);
-        if (data === '[DONE]') return;
+        if (data === '[DONE]') {
+          yield { content: '', done: true };
+          return;
+        }
 
         try {
           const parsed = JSON.parse(data);
-          const content = parsed.choices?.[0]?.delta?.content;
-          if (content) {
-            yield { content, done: false };
+          const delta = parsed.choices?.[0]?.delta;
+          if (delta?.content) {
+            yield { content: delta.content, done: false };
+          }
+          if (delta?.tool_calls) {
+            yield {
+              content: '',
+              done: false,
+              toolCalls: delta.tool_calls.map((tc: any) => ({
+                id: tc.id || '',
+                function: {
+                  name: tc.function?.name || '',
+                  arguments: tc.function?.arguments || ''
+                }
+              }))
+            };
           }
         } catch {
           // Skip malformed JSON chunks
@@ -246,10 +269,10 @@ export class MiMoProvider implements AICodingProvider, vscode.LanguageModelChatP
   private convertVSCodeMessages(
     messages: readonly vscode.LanguageModelChatRequestMessage[]
   ): ChatMessage[] {
-    return messages.map(msg => {
-      const role = msg.role === vscode.LanguageModelChatMessageRole.User ? 'user' : 'assistant';
+    return messages.map((msg): ChatMessage => {
+      const role: 'user' | 'assistant' = msg.role === vscode.LanguageModelChatMessageRole.User ? 'user' : 'assistant';
       const textParts: string[] = [];
-      
+
       for (const part of msg.content) {
         if (part instanceof vscode.LanguageModelTextPart) {
           textParts.push(part.value);

@@ -1,20 +1,31 @@
 /**
- * CodingDirector - Multi-agent orchestration system
- * Coordinates multiple AI providers for complex coding tasks
+ * CodingDirector - Multi-agent orchestration system.
+ *
+ * Flow:
+ *   1. PLAN     — architect agent breaks request into subtasks (with deps + agent role)
+ *   2. EXECUTE  — DAG executor runs subtasks in parallel respecting dependencies
+ *                 Each subtask acquires an AgentInstance from the pool and runs
+ *                 a full tool-calling loop via AgentExecutor (real file I/O).
+ *   3. REVIEW   — security reviewer checks final output (Sprint 3, stub for now)
+ *   4. SYNTHESIZE — architect combines all subtask outputs into final result
  */
 
 import * as vscode from 'vscode';
-import { AICodingProvider, ChatMessage, ChatChunk, ToolDefinition } from '../providers/BaseProvider';
+import { AICodingProvider, ChatMessage } from '../providers/BaseProvider';
 import { ProviderFactory } from '../providers/BaseProvider';
 import { MiMoProvider } from '../providers/MiMoProvider';
 import { KimiProvider } from '../providers/KimiProvider';
 import { DeepSeekProvider } from '../providers/DeepSeekProvider';
 import { ClaudeProvider } from '../providers/ClaudeProvider';
+import { AgentExecutor, AgentEvent } from './AgentExecutor';
+import { AgentPool } from './AgentPool';
+
+export type AgentRole = 'architect' | 'coder' | 'reviewer' | 'optimizer' | 'debugger' | 'tester' | 'security';
 
 export interface Subtask {
   id: string;
   description: string;
-  agent: string; // which provider/agent should handle this
+  agent: AgentRole;
   dependsOn?: string[];
   expectedOutput: string;
 }
@@ -27,11 +38,18 @@ export interface ExecutionPlan {
 
 export interface SubtaskResult {
   subtaskId: string;
+  agentId: string;        // e.g. "kimi-coder-001"
+  role: string;
   success: boolean;
   output: string;
+  toolsUsed: string[];
+  filesRead: string[];
+  filesModified: string[];
+  iterations: number;
   tokensUsed: number;
   cost: number;
   duration: number;
+  error?: string;
 }
 
 export interface OrchestrationResult {
@@ -42,222 +60,199 @@ export interface OrchestrationResult {
   totalCost: number;
   totalTokens: number;
   totalDuration: number;
+  poolUsage: Record<string, { inUse: number; limit: number; waiting: number }>;
 }
 
-/**
- * Task router - decides which agent is best for each task
- */
+export type DirectorEvent =
+  | { type: 'plan-start'; request: string }
+  | { type: 'plan-done'; subtaskCount: number }
+  | { type: 'subtask-start'; subtaskId: string; agentId: string; role: string; description: string }
+  | { type: 'subtask-progress'; subtaskId: string; agentId: string; event: AgentEvent }
+  | { type: 'subtask-done'; subtaskId: string; agentId: string; success: boolean; duration: number; cost: number }
+  | { type: 'synthesize-start' }
+  | { type: 'synthesize-done' }
+  | { type: 'budget-warning'; used: number; limit: number };
+
+/** Maps semantic role to preferred provider order (first available wins) */
 export class TaskRouter {
-  private agentRoles: Map<string, string[]> = new Map([
-    ['architect', ['kimi', 'claude']],
-    ['coder', ['mimo', 'deepseek']],
-    ['reviewer', ['claude', 'kimi']],
-    ['optimizer', ['deepseek', 'mimo']],
-    ['debugger', ['mimo', 'claude']],
-    ['tester', ['mimo', 'deepseek']]
+  private agentRoles: Map<AgentRole, string[]> = new Map([
+    ['architect', ['kimi', 'claude', 'mimo']],
+    ['coder',     ['mimo', 'deepseek', 'kimi']],
+    ['reviewer',  ['claude', 'kimi', 'mimo']],
+    ['security',  ['claude', 'kimi', 'mimo']],
+    ['optimizer', ['deepseek', 'mimo', 'kimi']],
+    ['debugger',  ['mimo', 'claude', 'deepseek']],
+    ['tester',    ['mimo', 'deepseek', 'kimi']]
   ]);
 
-  selectAgent(subtask: Subtask, availableProviders: AICodingProvider[]): AICodingProvider | undefined {
-    const preferred = this.agentRoles.get(subtask.agent) || [];
-    
-    for (const providerName of preferred) {
-      const provider = availableProviders.find(p => p.name === providerName);
-      if (provider) return provider;
+  selectProvider(role: AgentRole, available: AICodingProvider[]): AICodingProvider | undefined {
+    const preferred = this.agentRoles.get(role) ?? [];
+    for (const name of preferred) {
+      const p = available.find(x => x.name === name);
+      if (p) return p;
     }
-    
-    // Fallback to first available
-    return availableProviders[0];
+    return available[0];
   }
 
-  getAgentDescription(role: string): string {
-    const descriptions: Record<string, string> = {
-      architect: 'System design and architecture planning',
-      coder: 'Code generation and implementation',
-      reviewer: 'Code review and security analysis',
-      optimizer: 'Performance optimization and refactoring',
-      debugger: 'Debugging and error resolution',
-      tester: 'Test generation and validation'
+  describe(role: AgentRole): string {
+    const map: Record<AgentRole, string> = {
+      architect: 'a system architect — design and break down complex tasks',
+      coder:     'a coder — implement code according to spec, using read_file/write_file/edit_file/run_terminal',
+      reviewer:  'a code reviewer — analyze quality, correctness, and maintainability',
+      security:  'a security auditor — find vulnerabilities (OWASP Top 10), unsafe patterns, secrets exposure',
+      optimizer: 'a performance optimizer — identify and fix bottlenecks',
+      debugger:  'a debugger — diagnose and fix bugs',
+      tester:    'a test author — write and run tests using run_terminal'
     };
-    return descriptions[role] || 'General coding assistant';
+    return map[role];
   }
 }
 
-/**
- * Shared memory for context persistence across agents
- */
+/** Keyed key→content store, persisted to .orchestra-context.md */
 export class SharedMemory {
-  private contextDir: string;
-  private vectorStore: Map<string, string> = new Map();
+  private store: Map<string, string> = new Map();
+  constructor(private workspaceRoot: string) {}
 
-  constructor(workspaceRoot: string) {
-    this.contextDir = workspaceRoot;
-  }
-
-  async add(key: string, content: string): Promise<void> {
-    this.vectorStore.set(key, content);
-    
-    // Persist to .orchestra-context.md
-    const contextFile = `${this.contextDir}/.orchestra-context.md`;
-    const fs = require('fs');
-    const entry = `\n## ${key}\n${content}\n`;
-    
+  add(key: string, content: string): void {
+    this.store.set(key, content);
     try {
-      if (fs.existsSync(contextFile)) {
-        fs.appendFileSync(contextFile, entry);
-      } else {
-        fs.writeFileSync(contextFile, `# Orchestra Context\n${entry}`);
-      }
-    } catch (e) {
-      // Silent fail for persistence
-    }
+      const fs = require('fs');
+      const path = require('path');
+      const file = path.join(this.workspaceRoot, '.orchestra-context.md');
+      const entry = `\n## ${key}\n${content}\n`;
+      if (fs.existsSync(file)) fs.appendFileSync(file, entry);
+      else fs.writeFileSync(file, `# Orchestra Context\n${entry}`);
+    } catch { /* persistence is best-effort */ }
   }
 
-  async get(key: string): Promise<string | undefined> {
-    return this.vectorStore.get(key);
-  }
+  get(key: string): string | undefined { return this.store.get(key); }
 
-  async search(query: string): Promise<string[]> {
-    // Simple keyword search - in production would use embeddings
-    const results: string[] = [];
-    for (const [key, content] of this.vectorStore) {
-      if (content.toLowerCase().includes(query.toLowerCase())) {
-        results.push(content);
-      }
-    }
-    return results;
-  }
-
-  async getProjectContext(): Promise<string> {
+  loadProjectContext(): string {
     const fs = require('fs');
-    const files = [
-      'CLAUDE.md',
-      '.cursorrules',
-      '.mimo-context.md',
-      '.orchestra-context.md'
-    ];
-    
+    const path = require('path');
+    const candidates = ['CLAUDE.md', '.cursorrules', '.mimo-context.md', '.orchestra-context.md', 'AGENTS.md'];
     let context = '';
-    for (const file of files) {
+    for (const f of candidates) {
       try {
-        const path = `${this.contextDir}/${file}`;
-        if (fs.existsSync(path)) {
-          context += `\n--- ${file} ---\n${fs.readFileSync(path, 'utf-8')}\n`;
+        const p = path.join(this.workspaceRoot, f);
+        if (fs.existsSync(p)) {
+          context += `\n--- ${f} ---\n${fs.readFileSync(p, 'utf-8').substring(0, 5000)}\n`;
         }
-      } catch {
-        // Skip missing files
-      }
+      } catch { /* skip */ }
     }
     return context;
   }
 }
 
-/**
- * Main director that orchestrates the entire workflow
- */
+/** Main orchestrator */
 export class CodingDirector {
   private factory: ProviderFactory;
   private router: TaskRouter;
   private memory: SharedMemory;
+  private executor: AgentExecutor;
+  private pool: AgentPool;
   private budgetLimit: number;
-  private usedBudget: number = 0;
+  private usedBudget = 0;
+  private onEvent?: (e: DirectorEvent) => void;
 
-  constructor(workspaceRoot: string, budgetLimit: number = 5.0) {
+  constructor(workspaceRoot: string, budgetLimit: number = 5.0, pool?: AgentPool) {
     this.factory = new ProviderFactory();
     this.router = new TaskRouter();
     this.memory = new SharedMemory(workspaceRoot);
+    this.executor = new AgentExecutor();
+    this.pool = pool ?? new AgentPool();
     this.budgetLimit = budgetLimit;
-    
-    // Register all providers
+
     this.factory.register(new MiMoProvider());
     this.factory.register(new KimiProvider());
     this.factory.register(new DeepSeekProvider());
     this.factory.register(new ClaudeProvider());
   }
 
-  /**
-   * Main entry point - execute a complex coding request
-   */
-  async execute(request: string, progress?: vscode.Progress<{ message?: string; increment?: number }>): Promise<OrchestrationResult> {
+  setEventListener(handler: (e: DirectorEvent) => void): void {
+    this.onEvent = handler;
+  }
+
+  getPoolUsage() { return this.pool.getAllUsage(); }
+  getUsedBudget(): number { return this.usedBudget; }
+  getBudgetLimit(): number { return this.budgetLimit; }
+
+  /** Main entry point */
+  async execute(
+    request: string,
+    progress?: vscode.Progress<{ message?: string; increment?: number }>
+  ): Promise<OrchestrationResult> {
     const startTime = Date.now();
-    
-    // Get available providers
+
     const available = await this.factory.getAvailable();
     if (available.length === 0) {
-      throw new Error('No AI providers available. Please configure at least one API key.');
+      throw new Error('No AI providers available. Configure at least one API key.');
     }
 
-    // Phase 1: Planning (Architect)
-    progress?.report({ message: '🏗️ Architect analyzing request...', increment: 10 });
+    // ---- Phase 1: PLAN ----
+    progress?.report({ message: 'Architect analyzing request...', increment: 5 });
+    this.emit({ type: 'plan-start', request });
     const plan = await this.createPlan(request, available);
+    this.emit({ type: 'plan-done', subtaskCount: plan.subtasks.length });
+    progress?.report({ message: `Plan: ${plan.subtasks.length} subtasks`, increment: 5 });
 
-    // Phase 2: Execution
-    progress?.report({ message: `📋 Plan created: ${plan.subtasks.length} subtasks`, increment: 10 });
-    const results: SubtaskResult[] = [];
+    // ---- Phase 2: EXECUTE (DAG with parallel batches) ----
+    const results = await this.executeDag(plan, available, progress);
 
-    for (let i = 0; i < plan.subtasks.length; i++) {
-      const subtask = plan.subtasks[i];
-      const percent = Math.round(((i + 1) / plan.subtasks.length) * 60) + 20;
-      progress?.report({ 
-        message: `⚡ Executing: ${subtask.description} (${i + 1}/${plan.subtasks.length})`, 
-        increment: percent 
-      });
-
-      const result = await this.executeSubtask(subtask, available, plan);
-      results.push(result);
-
-      // Budget check
-      this.usedBudget += result.cost;
-      if (this.usedBudget > this.budgetLimit) {
-        throw new Error(`Budget exceeded: $${this.usedBudget.toFixed(2)} / $${this.budgetLimit}`);
-      }
-
-      // Store result in memory
-      await this.memory.add(`subtask-${subtask.id}`, result.output);
-    }
-
-    // Phase 3: Synthesis
-    progress?.report({ message: '🔄 Synthesizing final result...', increment: 90 });
+    // ---- Phase 3: SYNTHESIZE ----
+    this.emit({ type: 'synthesize-start' });
+    progress?.report({ message: 'Synthesizing final result...', increment: 90 });
     const finalOutput = await this.synthesizeResults(plan, results, available);
-
-    const totalDuration = Date.now() - startTime;
-    const totalCost = results.reduce((sum, r) => sum + r.cost, 0);
-    const totalTokens = results.reduce((sum, r) => sum + r.tokensUsed, 0);
+    this.emit({ type: 'synthesize-done' });
 
     return {
       success: results.every(r => r.success),
       plan,
       results,
       finalOutput,
-      totalCost,
-      totalTokens,
-      totalDuration
+      totalCost: results.reduce((s, r) => s + r.cost, 0),
+      totalTokens: results.reduce((s, r) => s + r.tokensUsed, 0),
+      totalDuration: Date.now() - startTime,
+      poolUsage: this.pool.getAllUsage()
     };
   }
 
-  /**
-   * Create execution plan using the architect agent
-   */
-  private async createPlan(request: string, providers: AICodingProvider[]): Promise<ExecutionPlan> {
-    const architect = this.router.selectAgent({ id: 'plan', description: 'plan', agent: 'architect', expectedOutput: '' }, providers);
-    if (!architect) throw new Error('No architect agent available');
+  /** Build the plan via the architect */
+  private async createPlan(request: string, available: AICodingProvider[]): Promise<ExecutionPlan> {
+    const architect = this.router.selectProvider('architect', available);
+    if (!architect) throw new Error('No architect provider available');
 
-    const context = await this.memory.getProjectContext();
+    const context = this.memory.loadProjectContext();
     const messages: ChatMessage[] = [
       {
         role: 'system',
-        content: `You are a system architect. Analyze coding requests and break them into specific subtasks.
-        For each subtask, specify:
-        - agent: one of [coder, reviewer, optimizer, debugger, tester]
-        - description: what to do
-        - expectedOutput: what the agent should produce
-        
-        Respond in JSON format:
-        {
-          "subtasks": [
-            { "id": "1", "description": "...", "agent": "coder", "expectedOutput": "..." }
-          ],
-          "requirements": ["requirement1", "requirement2"]
-        }`
+        content: `You are a system architect. Break the user's request into specific subtasks for parallel execution by specialist agents.
+
+Available agent roles:
+- coder: implementation (read/write/edit files, run commands)
+- reviewer: code quality review
+- security: security audit (OWASP, secrets, injection risks)
+- optimizer: performance improvements
+- debugger: bug diagnosis and fixes
+- tester: write and execute tests
+
+Respond ONLY with valid JSON, no markdown fences:
+{
+  "subtasks": [
+    {
+      "id": "1",
+      "description": "Concrete task description with specific files/functions",
+      "agent": "coder",
+      "dependsOn": [],
+      "expectedOutput": "What this task should produce"
+    }
+  ],
+  "requirements": ["constraint1", "constraint2"]
+}
+
+Use dependsOn: [] for independent subtasks (will run in parallel).
+Reference subtask IDs in dependsOn for tasks that need previous outputs.
+Aim for 2-6 subtasks. Avoid over-decomposition for simple requests.`
       },
       {
         role: 'user',
@@ -266,33 +261,37 @@ export class CodingDirector {
     ];
 
     let response = '';
-    const stream = architect.chat({ model: architect.models[0].id, messages, stream: true });
+    const stream = architect.chat({ model: architect.models[0].id, messages, stream: true, maxTokens: 4000 });
     for await (const chunk of stream) {
-      response += chunk.content;
+      if (chunk.content) response += chunk.content;
+      if (chunk.done) break;
     }
 
     try {
-      const parsed = JSON.parse(response);
+      // Strip markdown fences if architect ignored instructions
+      const cleaned = response.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/, '').trim();
+      const parsed = JSON.parse(cleaned);
       return {
         originalRequest: request,
         subtasks: parsed.subtasks.map((st: any, idx: number) => ({
-          id: st.id || `${idx + 1}`,
+          id: String(st.id ?? idx + 1),
           description: st.description,
-          agent: st.agent,
-          expectedOutput: st.expectedOutput,
-          dependsOn: st.dependsOn
+          agent: st.agent as AgentRole,
+          dependsOn: Array.isArray(st.dependsOn) ? st.dependsOn.map(String) : [],
+          expectedOutput: st.expectedOutput || ''
         })),
-        requirements: parsed.requirements || []
+        requirements: Array.isArray(parsed.requirements) ? parsed.requirements : []
       };
     } catch {
-      // Fallback: single task
+      // Fallback: single coder task
       return {
         originalRequest: request,
         subtasks: [{
           id: '1',
           description: request,
           agent: 'coder',
-          expectedOutput: 'Complete implementation'
+          dependsOn: [],
+          expectedOutput: 'Working implementation'
         }],
         requirements: []
       };
@@ -300,118 +299,211 @@ export class CodingDirector {
   }
 
   /**
-   * Execute a single subtask
+   * Execute subtasks respecting the dependency DAG.
+   * Independent subtasks run in parallel (limited by pool concurrency).
    */
-  private async executeSubtask(
-    subtask: Subtask, 
-    providers: AICodingProvider[],
-    plan: ExecutionPlan
-  ): Promise<SubtaskResult> {
-    const startTime = Date.now();
-    const agent = this.router.selectAgent(subtask, providers);
-    if (!agent) {
-      return {
-        subtaskId: subtask.id,
-        success: false,
-        output: `No agent available for role: ${subtask.agent}`,
-        tokensUsed: 0,
-        cost: 0,
-        duration: 0
-      };
-    }
+  private async executeDag(
+    plan: ExecutionPlan,
+    available: AICodingProvider[],
+    progress?: vscode.Progress<{ message?: string; increment?: number }>
+  ): Promise<SubtaskResult[]> {
+    const results = new Map<string, SubtaskResult>();
+    const completed = new Set<string>();
+    const remaining = new Map(plan.subtasks.map(st => [st.id, st]));
+    let completedCount = 0;
+    const total = plan.subtasks.length;
 
-    const context = await this.memory.getProjectContext();
-    const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: `You are a ${this.router.getAgentDescription(subtask.agent)}.
-        Task: ${subtask.description}
-        Expected output: ${subtask.expectedOutput}
-        Requirements: ${plan.requirements.join(', ')}`
-      },
-      {
-        role: 'user',
-        content: `Project context:\n${context}\n\nExecute this task: ${subtask.description}`
+    while (remaining.size > 0) {
+      // Find subtasks whose dependencies are all done
+      const ready = [...remaining.values()].filter(st =>
+        (st.dependsOn ?? []).every(dep => completed.has(dep))
+      );
+
+      if (ready.length === 0) {
+        // Cycle or impossible deps — bail out
+        for (const st of remaining.values()) {
+          results.set(st.id, this.failureResult(st, 'Unsatisfiable dependency'));
+          completed.add(st.id);
+        }
+        break;
       }
-    ];
 
-    let output = '';
-    let tokenCount = 0;
-    
-    try {
-      const stream = agent.chat({ 
-        model: agent.models[0].id, 
-        messages, 
-        stream: true,
-        maxTokens: 4000
+      // Run all ready subtasks in parallel
+      progress?.report({
+        message: `Running ${ready.length} subtask(s) in parallel: ${ready.map(s => s.agent).join(', ')}`,
+        increment: 0
       });
 
-      for await (const chunk of stream) {
-        output += chunk.content;
-        tokenCount += agent.countTokens(chunk.content);
+      const batchResults = await Promise.all(
+        ready.map(st => this.runSubtask(st, plan, available, results))
+      );
+
+      for (const r of batchResults) {
+        results.set(r.subtaskId, r);
+        completed.add(r.subtaskId);
+        remaining.delete(r.subtaskId);
+        completedCount++;
+
+        this.usedBudget += r.cost;
+        if (this.usedBudget > this.budgetLimit) {
+          this.emit({ type: 'budget-warning', used: this.usedBudget, limit: this.budgetLimit });
+          throw new Error(`Budget exceeded: $${this.usedBudget.toFixed(2)} / $${this.budgetLimit}`);
+        }
+
+        // Save to shared memory for downstream tasks
+        this.memory.add(`subtask-${r.subtaskId}`, r.output);
+
+        const pct = Math.round((completedCount / total) * 70) + 10;
+        progress?.report({ message: `${completedCount}/${total} subtasks complete`, increment: pct });
       }
+    }
+
+    return plan.subtasks.map(st => results.get(st.id)!);
+  }
+
+  /** Run a single subtask: acquire agent, execute with tools, release */
+  private async runSubtask(
+    subtask: Subtask,
+    plan: ExecutionPlan,
+    available: AICodingProvider[],
+    priorResults: Map<string, SubtaskResult>
+  ): Promise<SubtaskResult> {
+    const startTime = Date.now();
+    const provider = this.router.selectProvider(subtask.agent, available);
+    if (!provider) {
+      return this.failureResult(subtask, `No provider available for role: ${subtask.agent}`);
+    }
+
+    const instance = await this.pool.acquire(provider, provider.models[0].id, subtask.agent);
+    this.emit({
+      type: 'subtask-start',
+      subtaskId: subtask.id,
+      agentId: instance.id,
+      role: subtask.agent,
+      description: subtask.description
+    });
+
+    try {
+      // Build context: project files + outputs from dependencies
+      const projectContext = this.memory.loadProjectContext();
+      const depContext = (subtask.dependsOn ?? [])
+        .map(depId => priorResults.get(depId))
+        .filter(r => r && r.success)
+        .map(r => `\n--- Output from subtask ${r!.subtaskId} (${r!.role}) ---\n${r!.output}\n`)
+        .join('\n');
+
+      const systemPrompt = `You are ${this.router.describe(subtask.agent)}.
+
+Working as agent: ${instance.id}
+Original user request: ${plan.originalRequest}
+Requirements: ${plan.requirements.join('; ') || 'none specified'}
+
+Your specific subtask: ${subtask.description}
+Expected output: ${subtask.expectedOutput}
+
+You have access to file and shell tools. Use them to actually inspect and modify the codebase.
+When done, give a concise summary of what you produced.
+
+PROJECT CONTEXT:
+${projectContext}
+${depContext ? '\nDEPENDENCY OUTPUTS:\n' + depContext : ''}`;
+
+      const result = await this.executor.run({
+        provider,
+        modelId: instance.modelId,
+        systemPrompt,
+        userTask: subtask.description,
+        maxIterations: 30,
+        onProgress: (event) => {
+          this.emit({ type: 'subtask-progress', subtaskId: subtask.id, agentId: instance.id, event });
+        }
+      });
 
       const duration = Date.now() - startTime;
-      const cost = agent.estimateCost(tokenCount, tokenCount, agent.models[0].id);
+      const tokens = result.inputTokensEstimate + result.outputTokensEstimate;
+      const cost = provider.estimateCost(result.inputTokensEstimate, result.outputTokensEstimate, instance.modelId);
+
+      this.emit({
+        type: 'subtask-done',
+        subtaskId: subtask.id,
+        agentId: instance.id,
+        success: result.success,
+        duration,
+        cost
+      });
 
       return {
         subtaskId: subtask.id,
-        success: true,
-        output,
-        tokensUsed: tokenCount,
+        agentId: instance.id,
+        role: subtask.agent,
+        success: result.success,
+        output: result.finalText || result.error || '',
+        toolsUsed: result.toolsUsed,
+        filesRead: result.filesRead,
+        filesModified: result.filesModified,
+        iterations: result.iterations,
+        tokensUsed: tokens,
         cost,
-        duration
+        duration,
+        error: result.error
       };
-    } catch (error: any) {
-      return {
-        subtaskId: subtask.id,
-        success: false,
-        output: `Error: ${error.message}`,
-        tokensUsed: tokenCount,
-        cost: 0,
-        duration: Date.now() - startTime
-      };
+    } finally {
+      instance.release();
     }
   }
 
-  /**
-   * Synthesize all subtask results into final output
-   */
   private async synthesizeResults(
     plan: ExecutionPlan,
     results: SubtaskResult[],
-    providers: AICodingProvider[]
+    available: AICodingProvider[]
   ): Promise<string> {
-    const architect = this.router.selectAgent({ id: 'synth', description: 'synth', agent: 'architect', expectedOutput: '' }, providers);
+    const architect = this.router.selectProvider('architect', available);
     if (!architect) {
-      return results.map(r => r.output).join('\n\n---\n\n');
+      return results.map(r => `### ${r.role} (${r.agentId})\n${r.output}`).join('\n\n---\n\n');
     }
 
     const messages: ChatMessage[] = [
       {
         role: 'system',
-        content: 'You are a system architect. Synthesize multiple subtask outputs into a coherent final result. Combine code, remove duplicates, and ensure consistency.'
+        content: 'Synthesize the multi-agent execution into a coherent final report. Highlight what was done, files changed, and any issues found by reviewers.'
       },
       {
         role: 'user',
-        content: `Original request: ${plan.originalRequest}\n\nSubtask results:\n${results.map(r => `## ${r.subtaskId}\n${r.output}`).join('\n\n')}`
+        content: `Original request: ${plan.originalRequest}\n\nAgent outputs:\n${results.map(r =>
+          `## ${r.role} agent (${r.agentId}) — ${r.success ? 'SUCCESS' : 'FAILED'}\n` +
+          `Iterations: ${r.iterations}, Files modified: ${r.filesModified.join(', ') || 'none'}\n\n${r.output}`
+        ).join('\n\n---\n\n')}`
       }
     ];
 
     let output = '';
-    const stream = architect.chat({ model: architect.models[0].id, messages, stream: true });
+    const stream = architect.chat({ model: architect.models[0].id, messages, stream: true, maxTokens: 4000 });
     for await (const chunk of stream) {
-      output += chunk.content;
+      if (chunk.content) output += chunk.content;
+      if (chunk.done) break;
     }
-
     return output;
   }
 
-  getUsedBudget(): number {
-    return this.usedBudget;
+  private emit(e: DirectorEvent): void {
+    this.onEvent?.(e);
   }
 
-  getBudgetLimit(): number {
-    return this.budgetLimit;
+  private failureResult(subtask: Subtask, reason: string): SubtaskResult {
+    return {
+      subtaskId: subtask.id,
+      agentId: 'none',
+      role: subtask.agent,
+      success: false,
+      output: reason,
+      toolsUsed: [],
+      filesRead: [],
+      filesModified: [],
+      iterations: 0,
+      tokensUsed: 0,
+      cost: 0,
+      duration: 0,
+      error: reason
+    };
   }
 }
