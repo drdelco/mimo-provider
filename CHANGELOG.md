@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.2 (2026-05-07)
+
+### Critical fixes (5 bugs from first real Orchestra run)
+
+1. **Security review was lying**: when the auditor's JSON output failed to parse (due to leaked `<think>` tags from reasoning models), we were defaulting to `approved: true`. Now we default to `approved: false` with an explicit "Audit parsing failure" issue. **Never silently approves**.
+
+2. **`<think>...</think>` tag stripping**: reasoning models (MiMo, Kimi, MiniMax) emit chain-of-thought inside `<think>` tags. When unclosed or interleaved with structured output, they break JSON parsing and pollute final reports. New `stripThinkTags()` applied universally to:
+   - Plan parsing (architect output)
+   - Security review JSON parsing
+   - Final synthesis report
+   - Every Work Order's `finalText` (via `buildWorkOrderResult`)
+
+3. **Architect was not decomposing tasks**: the prompt now explicitly demands aggressive decomposition (3-12 Work Orders for non-trivial tasks) with concrete examples. A "create an Android app" request should produce ~6 parallel WOs (data, network, UI, scheduler, etc), not 1 monolith.
+
+4. **Pool stats showed all zeros**: we were reporting `inUse` after orchestration finished (when all agents have already released). Now tracks `peak` (max concurrent instances ever held) and `total` (total agents acquired across the run). Reported as `kimi peak 3/300 total 5`.
+
+5. **Better JSON extraction**: plan and security parsers now find the JSON object even if there's prose around it (firstBrace → lastBrace), instead of requiring strict JSON-only output.
+
 ## 1.2.1 (2026-05-06)
 
 ### Fixes

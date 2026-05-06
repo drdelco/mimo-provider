@@ -406,8 +406,8 @@ function renderResultHtml(result: OrchestrationResult): string {
       <div class="wo"><small>[${m.type}] <code>${m.from}</code> → <code>${m.to}</code> · ${escape(m.subject)}</small>
         <pre>${escape(m.body.substring(0, 400))}</pre></div>`).join('')}</details>` : '<p><em>No inter-agent messages.</em></p>'}
 
-  <h2>Pool concurrency</h2>
-  <pre>${escape(JSON.stringify(result.poolUsage, null, 2))}</pre>
+  <h2>Pool concurrency (peak / total agents per provider)</h2>
+  <pre>${escape(formatPoolUsage(result.poolUsage))}</pre>
 
   <h2>Vector memory</h2>
   <pre>${escape(JSON.stringify(result.memoryStats, null, 2))}</pre>
@@ -415,6 +415,16 @@ function renderResultHtml(result: OrchestrationResult): string {
   <h2>Final report</h2>
   <pre>${escape(result.finalOutput)}</pre>
 </body></html>`;
+}
+
+function formatPoolUsage(usage: Record<string, { inUse: number; peak: number; total: number; limit: number; waiting: number }>): string {
+  const lines: string[] = [];
+  for (const [name, u] of Object.entries(usage)) {
+    if (u.total === 0) continue; // skip providers that were never used
+    lines.push(`${name.padEnd(10)} peak ${u.peak}/${u.limit}   total agents acquired: ${u.total}`);
+  }
+  if (lines.length === 0) return '(no providers were used)';
+  return lines.join('\n');
 }
 
 function escape(text: string): string {

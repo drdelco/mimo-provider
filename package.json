@@ -2,7 +2,7 @@
   "name": "mimo-provider",
   "displayName": "MiMonster Orchestra",
   "description": "Multi-agent AI coding assistant. Single-agent chat with MiMo, Kimi, DeepSeek, MiniMax, and Claude — plus autonomous multi-agent orchestration with planning, parallel execution, security review, and inter-agent messaging.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "publisher": "drdelco",
   "icon": "icon.png",
   "repository": {

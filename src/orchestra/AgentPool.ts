@@ -39,6 +39,10 @@ export interface AgentInstance {
 interface PoolEntry {
   limit: number;
   inUse: number;
+  /** Maximum concurrent instances ever held during this pool's lifetime */
+  peakInUse: number;
+  /** Total instances acquired (including those already released) */
+  totalAcquired: number;
   /** Pending acquire() calls waiting for a slot */
   waiters: Array<() => void>;
   /** Counter for unique instance IDs per provider+role */
@@ -50,7 +54,7 @@ export class AgentPool {
 
   constructor(limits: Record<string, number> = DEFAULT_LIMITS) {
     for (const [name, limit] of Object.entries(limits)) {
-      this.pools.set(name, { limit, inUse: 0, waiters: [], counter: new Map() });
+      this.pools.set(name, { limit, inUse: 0, peakInUse: 0, totalAcquired: 0, waiters: [], counter: new Map() });
     }
   }
 
@@ -62,7 +66,7 @@ export class AgentPool {
       // Wake up waiters if we just increased the limit
       this.drain(providerName);
     } else {
-      this.pools.set(providerName, { limit, inUse: 0, waiters: [], counter: new Map() });
+      this.pools.set(providerName, { limit, inUse: 0, peakInUse: 0, totalAcquired: 0, waiters: [], counter: new Map() });
     }
   }
 
@@ -79,6 +83,8 @@ export class AgentPool {
     }
 
     entry.inUse++;
+    entry.totalAcquired++;
+    if (entry.inUse > entry.peakInUse) entry.peakInUse = entry.inUse;
     const n = (entry.counter.get(role) ?? 0) + 1;
     entry.counter.set(role, n);
     const id = `${provider.name}-${role}-${String(n).padStart(3, '0')}`;
@@ -92,16 +98,16 @@ export class AgentPool {
     };
   }
 
-  /** Quick check — how many slots are currently in use for a provider */
-  getUsage(providerName: string): { inUse: number; limit: number; waiting: number } {
+  /** Quick check — current/peak/total counters for a provider */
+  getUsage(providerName: string): { inUse: number; peak: number; total: number; limit: number; waiting: number } {
     const e = this.pools.get(providerName);
-    if (!e) return { inUse: 0, limit: 0, waiting: 0 };
-    return { inUse: e.inUse, limit: e.limit, waiting: e.waiters.length };
+    if (!e) return { inUse: 0, peak: 0, total: 0, limit: 0, waiting: 0 };
+    return { inUse: e.inUse, peak: e.peakInUse, total: e.totalAcquired, limit: e.limit, waiting: e.waiters.length };
   }
 
   /** Snapshot of all pools for telemetry */
-  getAllUsage(): Record<string, { inUse: number; limit: number; waiting: number }> {
-    const out: Record<string, { inUse: number; limit: number; waiting: number }> = {};
+  getAllUsage(): Record<string, { inUse: number; peak: number; total: number; limit: number; waiting: number }> {
+    const out: Record<string, { inUse: number; peak: number; total: number; limit: number; waiting: number }> = {};
     for (const name of this.pools.keys()) {
       out[name] = this.getUsage(name);
     }
@@ -112,6 +118,8 @@ export class AgentPool {
     const entry: PoolEntry = {
       limit: DEFAULT_LIMITS[providerName] ?? 5,
       inUse: 0,
+      peakInUse: 0,
+      totalAcquired: 0,
       waiters: [],
       counter: new Map()
     };

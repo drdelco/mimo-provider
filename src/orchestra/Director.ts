@@ -38,6 +38,26 @@ import {
 
 export type AgentRole = 'architect' | 'coder' | 'reviewer' | 'optimizer' | 'debugger' | 'tester' | 'security';
 
+/**
+ * Strip <think>...</think> chain-of-thought blocks from reasoning model output.
+ *
+ * Models like MiMo, Kimi, and MiniMax emit their reasoning inside <think> tags.
+ * If a closing </think> appears mid-JSON, naive parsers explode. We strip:
+ *   - Properly closed <think>...</think> blocks
+ *   - Unclosed <think>... that runs to end-of-text (truncated reasoning)
+ *   - Stray closing </think> that follows leaked reasoning
+ */
+export function stripThinkTags(text: string): string {
+  if (!text) return text;
+  // Closed blocks
+  let result = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  // Unclosed opening (model started thinking but never closed)
+  result = result.replace(/<think>[\s\S]*$/i, '');
+  // Stray closing (reasoning leaked before the tag, then the tag appeared)
+  result = result.replace(/<\/think>/gi, '');
+  return result.trim();
+}
+
 export interface OrchestrationResult {
   success: boolean;
   workOrders: WorkOrder[];
@@ -46,7 +66,7 @@ export interface OrchestrationResult {
   totalCost: number;
   totalTokens: number;
   totalDuration: number;
-  poolUsage: Record<string, { inUse: number; limit: number; waiting: number }>;
+  poolUsage: Record<string, { inUse: number; peak: number; total: number; limit: number; waiting: number }>;
   mailboxStats: ReturnType<AgentMailbox['stats']>;
   conversationLog: AgentMessage[];
   memoryStats: ReturnType<VectorMemory['stats']>;
@@ -310,11 +330,16 @@ Each Work Order must include:
 - deliverables: concrete outputs (file paths, function names, behaviors)
 - acceptanceCriteria: explicit testable checks for "done"
 
-Guidelines:
-- Aim for 2-6 Work Orders. Don't over-decompose.
-- Use dependsOn: [] for tasks that can run in parallel.
-- Acceptance criteria must be explicit ("file X compiles", "function Y returns Z when called with W").
-- Deliverables must be concrete things that exist after the WO is done.
+Guidelines (CRITICAL — read carefully):
+- DECOMPOSE AGGRESSIVELY. The whole point of the orchestra is parallelism. A task that touches multiple layers (data, network, UI, services, build config) MUST be split into one WorkOrder per layer.
+- Target: at least 3-5 Work Orders for any non-trivial task. Up to 12 for large multi-component projects.
+- Use dependsOn: [] for tasks that can run in parallel — be generous with parallelism.
+- Examples of GOOD decomposition for an Android app: setup-project / data-layer (Room, entities) / network-layer (Retrofit, API) / UI-layer (Activities, layouts) / scheduler (WorkManager) / resources (strings, themes, drawables). Most of these have no dependencies between each other.
+- Examples of GOOD decomposition for a JWT auth feature: middleware-implementation / token-issuer / refresh-token-flow / role-validator / rate-limiter / unit-tests.
+- Tiny one-line bug fixes are the only case for a single Work Order.
+- Acceptance criteria must be explicit and testable ("file X compiles", "function Y returns Z when called with W").
+- Deliverables must be concrete artifacts that exist after the WO is done.
+- A reviewer WorkOrder can run in parallel with coders if it reviews their output (use dependsOn for the reviewed WO ids).
 
 Respond ONLY with valid JSON, no markdown fences:
 {
@@ -336,8 +361,17 @@ Respond ONLY with valid JSON, no markdown fences:
     }
 
     try {
-      const cleaned = response.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/, '').trim();
-      const parsed = JSON.parse(cleaned);
+      // Strip <think> reasoning blocks BEFORE parsing — reasoning models leak them
+      const stripped = stripThinkTags(response);
+      // Then strip markdown fences and try to find the JSON object
+      const cleaned = stripped.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/, '').trim();
+      // Find the JSON object even if there's prose around it
+      const firstBrace = cleaned.indexOf('{');
+      const lastBrace = cleaned.lastIndexOf('}');
+      const jsonStr = firstBrace >= 0 && lastBrace > firstBrace
+        ? cleaned.substring(firstBrace, lastBrace + 1)
+        : cleaned;
+      const parsed = JSON.parse(jsonStr);
       const list = (parsed.workOrders ?? parsed.subtasks ?? []) as any[];
       return list.map((raw, idx) => buildWorkOrder(raw, idx));
     } catch {
@@ -683,17 +717,31 @@ Read each modified file and produce the JSON audit report.`;
       const duration = Date.now() - startTime;
       const cost = provider.estimateCost(result.inputTokensEstimate, result.outputTokensEstimate, instance.modelId);
 
-      // Parse the agent's JSON output
-      let parsed: any = { approved: true, issues: [], summary: result.finalText };
+      // Parse the agent's JSON output. SAFE DEFAULT: approved=false when parsing fails —
+      // we should never silently approve when we cannot understand the auditor's verdict.
+      const cleanedText = stripThinkTags(result.finalText);
+      let parsed: any = {
+        approved: false,
+        issues: [{
+          severity: 'high' as const,
+          category: 'Audit parsing failure',
+          description: 'The security auditor produced output that could not be parsed as the expected JSON format. This is treated as NOT approved by default. Manual review required.',
+          recommendation: 'Re-run the orchestration or audit the produced files manually before deploying.'
+        }],
+        summary: cleanedText.substring(0, 500) || 'Auditor produced no readable output.'
+      };
       try {
-        const cleaned = result.finalText.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/, '').trim();
-        // Find the last JSON object in the text (in case agent wrote prose first)
-        const lastBrace = cleaned.lastIndexOf('}');
+        const cleaned = cleanedText.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/, '').trim();
         const firstBrace = cleaned.indexOf('{');
+        const lastBrace = cleaned.lastIndexOf('}');
         if (firstBrace >= 0 && lastBrace > firstBrace) {
-          parsed = JSON.parse(cleaned.substring(firstBrace, lastBrace + 1));
+          const candidate = JSON.parse(cleaned.substring(firstBrace, lastBrace + 1));
+          // Only overwrite the safe default if the parsed object has the expected shape
+          if (typeof candidate.approved === 'boolean' && Array.isArray(candidate.issues)) {
+            parsed = candidate;
+          }
         }
-      } catch { /* fall through with defaults */ }
+      } catch { /* keep safe default */ }
 
       return {
         agentId: instance.id,
@@ -754,7 +802,8 @@ Read each modified file and produce the JSON audit report.`;
       if (chunk.content) output += chunk.content;
       if (chunk.done) break;
     }
-    return output || this.fallbackSynthesis(workOrders, securityReview);
+    const cleaned = stripThinkTags(output);
+    return cleaned || this.fallbackSynthesis(workOrders, securityReview);
   }
 
   private fallbackSynthesis(workOrders: WorkOrder[], securityReview?: SecurityReviewResult): string {

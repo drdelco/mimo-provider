@@ -20,7 +20,7 @@
  * WorkOrder and either delivers, blocks, or fails.
  */
 
-import { AgentRole } from './Director';
+import { AgentRole, stripThinkTags } from './Director';
 
 export type WorkOrderStatus =
   | 'pending'         // Created, not yet started
@@ -186,17 +186,19 @@ export function buildWorkOrderResult(
   cost: number,
   blockers?: string[]
 ): WorkOrderResult {
+  // Strip <think> reasoning blocks from the final text before storing/displaying
+  const cleanText = stripThinkTags(agentResult.finalText);
   return {
     filesCreated: agentResult.filesModified.filter(f => !agentResult.filesRead.includes(f)),
     filesModified: agentResult.filesModified,
     toolsUsed: agentResult.toolsUsed,
-    summary: agentResult.finalText.split('\n').slice(0, 5).join(' ').substring(0, 300),
+    summary: cleanText.split('\n').slice(0, 5).join(' ').substring(0, 300),
     blockers,
     iterations: agentResult.iterations,
     tokensUsed: agentResult.inputTokensEstimate + agentResult.outputTokensEstimate,
     cost,
     duration,
-    finalText: agentResult.finalText,
+    finalText: cleanText,
     error: agentResult.error
   };
 }
