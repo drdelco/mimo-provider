@@ -1,20 +1,20 @@
 {
   "name": "mimo-provider",
-  "displayName": "MiMo by Xiaomi",
-  "description": "Xiaomi MiMo language models (V2 Pro & Flash) for Antigravity and VS Code chat — native model provider with streaming and tool calling support.",
-  "version": "0.1.0",
+  "displayName": "AI Orchestra — Multi-Provider Coding Agent",
+  "description": "Multi-provider AI coding agent with orchestration. Supports MiMo, Kimi, DeepSeek, and Claude with autonomous multi-agent collaboration.",
+  "version": "0.2.0",
   "publisher": "alvi-ngclinicas",
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/alvi-ngclinicas/antigravity-mimo"
+    "url": "https://github.com/drdelco/mimo-provider"
   },
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": ["AI", "Other"],
-  "keywords": ["mimo", "xiaomi", "ai", "language-model", "chat", "antigravity", "llm", "coding-assistant"],
+  "keywords": ["mimo", "xiaomi", "kimi", "deepseek", "claude", "ai", "language-model", "chat", "antigravity", "llm", "coding-assistant", "orchestra", "multi-agent"],
   "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
   "contributes": {
@@ -31,7 +31,7 @@
       "activitybar": [
         {
           "id": "mimo-sidebar",
-          "title": "MiMo by Xiaomi",
+          "title": "AI Orchestra",
           "icon": "activity-icon.png"
         }
       ]
@@ -41,7 +41,12 @@
         {
           "type": "webview",
           "id": "mimo.chatView",
-          "name": "MiMo Chat"
+          "name": "Chat"
+        },
+        {
+          "type": "webview",
+          "id": "mimo.orchestraView",
+          "name": "Orchestra"
         }
       ]
     },
@@ -50,6 +55,21 @@
         "vendor": "mimo",
         "displayName": "Xiaomi MiMo",
         "managementCommand": "mimo.manage"
+      },
+      {
+        "vendor": "kimi",
+        "displayName": "Moonshot Kimi",
+        "managementCommand": "kimi.manage"
+      },
+      {
+        "vendor": "deepseek",
+        "displayName": "DeepSeek",
+        "managementCommand": "deepseek.manage"
+      },
+      {
+        "vendor": "claude",
+        "displayName": "Anthropic Claude",
+        "managementCommand": "claude.manage"
       }
     ],
     "chatParticipants": [
@@ -59,6 +79,12 @@
         "description": "Xiaomi MiMo AI coding assistant",
         "isSticky": true,
         "isDefault": true
+      },
+      {
+        "id": "orchestra",
+        "name": "Orchestra",
+        "description": "Multi-agent AI orchestration — Kimi plans, MiMo codes, Claude reviews",
+        "isSticky": false
       }
     ],
     "commands": [
@@ -72,16 +98,37 @@
       },
       {
         "command": "mimo.openChat",
-        "title": "MiMo: Open Chat Panel",
+        "title": "AI: Open Chat Panel",
         "icon": "$(mimo-logo)"
       },
       {
         "command": "mimo.newChat",
-        "title": "MiMo: New Chat"
+        "title": "AI: New Chat"
       },
       {
         "command": "mimo.clearHistory",
-        "title": "MiMo: Clear Chat History"
+        "title": "AI: Clear Chat History"
+      },
+      {
+        "command": "kimi.manage",
+        "title": "Kimi: Configure API Key"
+      },
+      {
+        "command": "deepseek.manage",
+        "title": "DeepSeek: Configure API Key"
+      },
+      {
+        "command": "claude.manage",
+        "title": "Claude: Configure API Key"
+      },
+      {
+        "command": "orchestra.execute",
+        "title": "🎼 Orchestra: Execute Complex Task",
+        "icon": "$(mimo-logo)"
+      },
+      {
+        "command": "orchestra.status",
+        "title": "Orchestra: Show Status"
       }
     ],
     "menus": {
@@ -90,21 +137,81 @@
           "command": "mimo.openChat",
           "group": "navigation",
           "when": "true"
+        },
+        {
+          "command": "orchestra.execute",
+          "group": "navigation",
+          "when": "true"
         }
       ]
     },
     "configuration": {
-      "title": "MiMo Provider",
+      "title": "AI Orchestra — Multi-Provider Settings",
       "properties": {
         "mimo.apiKey": {
           "type": "string",
           "default": "",
-          "description": "MiMo API Key"
+          "description": "MiMo API Key (Token Plan or SK)",
+          "scope": "application"
         },
         "mimo.baseUrl": {
           "type": "string",
           "default": "https://token-plan-ams.xiaomimimo.com/v1",
           "description": "MiMo API base URL"
+        },
+        "kimi.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Moonshot Kimi API Key",
+          "scope": "application"
+        },
+        "kimi.baseUrl": {
+          "type": "string",
+          "default": "https://api.moonshot.cn/v1",
+          "description": "Kimi API base URL"
+        },
+        "deepseek.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API Key",
+          "scope": "application"
+        },
+        "deepseek.baseUrl": {
+          "type": "string",
+          "default": "https://api.deepseek.com/v1",
+          "description": "DeepSeek API base URL"
+        },
+        "claude.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic Claude API Key",
+          "scope": "application"
+        },
+        "claude.baseUrl": {
+          "type": "string",
+          "default": "https://api.anthropic.com/v1",
+          "description": "Claude API base URL"
+        },
+        "orchestra.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable multi-agent orchestration mode"
+        },
+        "orchestra.director": {
+          "type": "string",
+          "default": "kimi",
+          "enum": ["kimi", "claude", "mimo"],
+          "description": "Which model acts as the director/architect"
+        },
+        "orchestra.budgetLimit": {
+          "type": "number",
+          "default": 5.0,
+          "description": "Maximum budget per orchestration (USD)"
+        },
+        "orchestra.autoFallback": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically fallback to available providers if primary fails"
         }
       }
     }

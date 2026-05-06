@@ -1,15 +1,33 @@
+/**
+ * AI Orchestra - Multi-Provider Extension
+ * Entry point that registers all providers and orchestration
+ */
+
 import * as vscode from 'vscode';
-import { MiMoProvider } from './provider';
+import { MiMoProvider } from './providers/MiMoProvider';
+import { KimiProvider } from './providers/KimiProvider';
+import { DeepSeekProvider } from './providers/DeepSeekProvider';
+import { ClaudeProvider } from './providers/ClaudeProvider';
+import { ProviderFactory } from './providers/BaseProvider';
+import { CodingDirector } from './orchestra/Director';
 import { MiMoChatParticipant } from './chat';
 import { MiMoChatViewProvider } from './webview';
 
 let currentPanel: vscode.WebviewPanel | undefined;
+let orchestraPanel: vscode.WebviewPanel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-  // Register the model provider
-  const provider = new MiMoProvider();
+  // Initialize provider factory
+  const factory = new ProviderFactory();
+  factory.register(new MiMoProvider());
+  factory.register(new KimiProvider());
+  factory.register(new DeepSeekProvider());
+  factory.register(new ClaudeProvider());
+
+  // Register all model providers with VS Code
+  const mimoProvider = new MiMoProvider();
   context.subscriptions.push(
-    vscode.lm.registerLanguageModelChatProvider('mimo', provider)
+    vscode.lm.registerLanguageModelChatProvider('mimo', mimoProvider)
   );
 
   // Register the VS Code chat participant
@@ -24,7 +42,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Open chat as editor tab (like Claude Code)
+  // Open chat as editor tab
   function openChatPanel() {
     if (currentPanel) {
       currentPanel.reveal(vscode.ViewColumn.One);
@@ -33,7 +51,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     currentPanel = vscode.window.createWebviewPanel(
       'mimo.chatPanel',
-      'MiMo by Xiaomi',
+      'AI Orchestra Chat',
       vscode.ViewColumn.One,
       {
         enableScripts: true,
@@ -44,7 +62,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     currentPanel.webview.html = chatViewProvider.getHtml(currentPanel.webview);
 
-    // Handle messages from the webview
     currentPanel.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
         case 'sendMessage':
@@ -65,23 +82,214 @@ export function activate(context: vscode.ExtensionContext) {
     });
   }
 
-  // Delegate chat handling to the webview provider
   async function handleChatMessage(text: string, webview: vscode.Webview) {
-    // Forward to the chat view provider's handler
-    // We need to use the provider's internal state
     (chatViewProvider as any).view = { webview };
     await (chatViewProvider as any).handleUserMessage(text);
   }
 
-  // Status bar button — custom MiMo icon
+  // ========== ORCHESTRA COMMANDS ==========
+
+  // Execute complex task with orchestration
+  context.subscriptions.push(
+    vscode.commands.registerCommand('orchestra.execute', async () => {
+      const request = await vscode.window.showInputBox({
+        prompt: '🎼 Describe the complex coding task',
+        placeHolder: 'e.g., "Create a JWT authentication system with refresh tokens, role-based access, and rate limiting"',
+        validateInput: (value) => value ? null : 'Please enter a task description'
+      });
+
+      if (!request) return;
+
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+      const director = new CodingDirector(workspaceRoot);
+
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: '🎼 AI Orchestra',
+        cancellable: true
+      }, async (progress, token) => {
+        try {
+          const result = await director.execute(request, progress);
+          
+          // Show results in new panel
+          showOrchestraResult(result);
+          
+          vscode.window.showInformationMessage(
+            `✅ Orchestra complete! Cost: $${result.totalCost.toFixed(2)}, Duration: ${(result.totalDuration / 1000).toFixed(1)}s`,
+            'View Details'
+          );
+        } catch (error: any) {
+          vscode.window.showErrorMessage(`❌ Orchestra failed: ${error.message}`);
+        }
+      });
+    })
+  );
+
+  // Show orchestra status
+  context.subscriptions.push(
+    vscode.commands.registerCommand('orchestra.status', async () => {
+      const available = await factory.getAvailable();
+      const all = factory.getAll();
+      
+      const status = all.map(p => {
+        const isAvail = available.find(a => a.name === p.name);
+        const icon = isAvail ? '✅' : '❌';
+        const models = p.models.map(m => m.name).join(', ');
+        return `${icon} ${p.displayName} — ${models}`;
+      }).join('\n');
+
+      vscode.window.showInformationMessage(
+        `AI Orchestra Status:\n${status}`,
+        { modal: true }
+      );
+    })
+  );
+
+  // ========== PROVIDER CONFIG COMMANDS ==========
+
+  // MiMo config
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mimo.manage', () => configureProvider('mimo'))
+  );
+
+  // Kimi config
+  context.subscriptions.push(
+    vscode.commands.registerCommand('kimi.manage', () => configureProvider('kimi'))
+  );
+
+  // DeepSeek config
+  context.subscriptions.push(
+    vscode.commands.registerCommand('deepseek.manage', () => configureProvider('deepseek'))
+  );
+
+  // Claude config
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claude.manage', () => configureProvider('claude'))
+  );
+
+  // Generic provider config helper
+  async function configureProvider(providerName: string) {
+    const config = vscode.workspace.getConfiguration(providerName);
+    const currentKey = config.get<string>('apiKey', '');
+    const displayNames: Record<string, string> = {
+      mimo: 'MiMo',
+      kimi: 'Kimi',
+      deepseek: 'DeepSeek',
+      claude: 'Claude'
+    };
+    const displayName = displayNames[providerName] || providerName;
+
+    const maskedKey = currentKey
+      ? `${currentKey.substring(0, 8)}...${currentKey.substring(currentKey.length - 4)}`
+      : '(not configured)';
+
+    const action = await vscode.window.showInformationMessage(
+      `${displayName} API Key: ${maskedKey}`,
+      'Change Key',
+      'Change Base URL',
+      'Test Connection'
+    );
+
+    if (action === 'Change Key') {
+      const newKey = await vscode.window.showInputBox({
+        prompt: `Enter your ${displayName} API Key`,
+        password: true,
+        value: currentKey
+      });
+
+      if (newKey !== undefined) {
+        await config.update('apiKey', newKey, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(`${displayName} API Key updated ✅`);
+      }
+    }
+
+    if (action === 'Change Base URL') {
+      const currentUrl = config.get<string>('baseUrl', '');
+      const newUrl = await vscode.window.showInputBox({
+        prompt: `${displayName} API Base URL`,
+        value: currentUrl
+      });
+
+      if (newUrl !== undefined) {
+        await config.update('baseUrl', newUrl, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(`${displayName} Base URL updated ✅`);
+      }
+    }
+
+    if (action === 'Test Connection') {
+      await testProviderConnection(providerName);
+    }
+  }
+
+  async function testProviderConnection(providerName: string) {
+    const config = vscode.workspace.getConfiguration(providerName);
+    const apiKey = config.get<string>('apiKey', '');
+    const baseUrl = config.get<string>('baseUrl', '');
+    const displayNames: Record<string, string> = {
+      mimo: 'MiMo',
+      kimi: 'Kimi',
+      deepseek: 'DeepSeek',
+      claude: 'Claude'
+    };
+    const displayName = displayNames[providerName] || providerName;
+
+    if (!apiKey) {
+      vscode.window.showErrorMessage(`${displayName}: API Key not configured`);
+      return;
+    }
+
+    try {
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Testing ${displayName} connection...`,
+        cancellable: true
+      }, async () => {
+        const provider = factory.get(providerName);
+        if (!provider) {
+          throw new Error(`Provider ${displayName} not found`);
+        }
+
+        const available = await provider.isAvailable();
+        if (available) {
+          const models = provider.models.map(m => m.name).join(', ');
+          vscode.window.showInformationMessage(`${displayName}: Connected ✅ — ${models}`);
+        } else {
+          vscode.window.showErrorMessage(`${displayName}: Connection failed ❌`);
+        }
+      });
+    } catch (error: any) {
+      vscode.window.showErrorMessage(`${displayName}: Connection error — ${error.message}`);
+    }
+  }
+
+  // Test all connections command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mimo.test', async () => {
+      for (const provider of factory.getAll()) {
+        await testProviderConnection(provider.name);
+      }
+    })
+  );
+
+  // ========== UI COMMANDS ==========
+
+  // Status bar button
   const statusBarBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarBtn.text = "$(mimo-logo)";
-  statusBarBtn.tooltip = 'Open MiMo Chat';
+  statusBarBtn.tooltip = 'Open AI Orchestra Chat';
   statusBarBtn.command = 'mimo.openChat';
   statusBarBtn.show();
   context.subscriptions.push(statusBarBtn);
 
-  // Open chat command — opens in editor tab
+  // Orchestra status bar
+  const orchestraBtn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+  orchestraBtn.text = "🎼";
+  orchestraBtn.tooltip = 'AI Orchestra: Execute Complex Task';
+  orchestraBtn.command = 'orchestra.execute';
+  orchestraBtn.show();
+  context.subscriptions.push(orchestraBtn);
+
+  // Open chat command
   context.subscriptions.push(
     vscode.commands.registerCommand('mimo.openChat', openChatPanel)
   );
@@ -93,105 +301,91 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Management command
+  // Clear history command
   context.subscriptions.push(
-    vscode.commands.registerCommand('mimo.manage', async () => {
-      const config = vscode.workspace.getConfiguration('mimo');
-      const currentKey = config.get<string>('apiKey', '');
-
-      const maskedKey = currentKey
-        ? `${currentKey.substring(0, 8)}...${currentKey.substring(currentKey.length - 4)}`
-        : '(not configured)';
-
-      const action = await vscode.window.showInformationMessage(
-        `MiMo API Key: ${maskedKey}`,
-        'Change Key',
-        'Change Base URL',
-        'Test Connection',
-        'Open Chat'
-      );
-
-      if (action === 'Change Key') {
-        const newKey = await vscode.window.showInputBox({
-          prompt: 'Enter your MiMo API Key',
-          password: true,
-          value: currentKey,
-          placeHolder: 'tp-...'
-        });
-
-        if (newKey !== undefined) {
-          await config.update('apiKey', newKey, vscode.ConfigurationTarget.Global);
-          await config.update('apiKey', newKey, vscode.ConfigurationTarget.Workspace);
-          vscode.window.showInformationMessage('MiMo API Key updated ✅');
-        }
-      }
-
-      if (action === 'Change Base URL') {
-        const currentUrl = config.get<string>('baseUrl', 'https://token-plan-ams.xiaomimimo.com/v1');
-        const newUrl = await vscode.window.showInputBox({
-          prompt: 'MiMo API Base URL',
-          value: currentUrl,
-          placeHolder: 'https://token-plan-ams.xiaomimimo.com/v1'
-        });
-
-        if (newUrl !== undefined) {
-          await config.update('baseUrl', newUrl, vscode.ConfigurationTarget.Global);
-          await config.update('baseUrl', newUrl, vscode.ConfigurationTarget.Workspace);
-          vscode.window.showInformationMessage('MiMo Base URL updated ✅');
-        }
-      }
-
-      if (action === 'Test Connection') {
-        await vscode.commands.executeCommand('mimo.test');
-      }
-
-      if (action === 'Open Chat') {
-        openChatPanel();
-      }
+    vscode.commands.registerCommand('mimo.clearHistory', () => {
+      chatViewProvider.clearHistory();
+      vscode.window.showInformationMessage('Chat history cleared 🗑️');
     })
   );
 
-  // Test connection command
-  context.subscriptions.push(
-    vscode.commands.registerCommand('mimo.test', async () => {
-      const config = vscode.workspace.getConfiguration('mimo');
-      const apiKey = config.get<string>('apiKey', '');
-      const baseUrl = config.get<string>('baseUrl', 'https://token-plan-ams.xiaomimimo.com/v1');
+  console.log('AI Orchestra extension activated');
+}
 
-      if (!apiKey) {
-        vscode.window.showErrorMessage('MiMo: API Key not configured');
-        return;
-      }
+function showOrchestraResult(result: any) {
+  if (orchestraPanel) {
+    orchestraPanel.reveal(vscode.ViewColumn.Two);
+    return;
+  }
 
-      try {
-        await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: 'Testing MiMo connection...',
-            cancellable: true
-          },
-          async (progress, token) => {
-            const response = await fetch(`${baseUrl}/models`, {
-              headers: { 'Authorization': `Bearer ${apiKey}` },
-              signal: AbortSignal.timeout(10000)
-            });
-
-            if (response.ok) {
-              const data = await response.json() as any;
-              const models = data.data?.map((m: any) => m.id).join(', ') || 'unknown';
-              vscode.window.showInformationMessage(`MiMo: Connected ✅ — ${models}`);
-            } else {
-              vscode.window.showErrorMessage(`MiMo: Error ${response.status} — ${await response.text()}`);
-            }
-          }
-        );
-      } catch (error: any) {
-        vscode.window.showErrorMessage(`MiMo: Connection error — ${error.message}`);
-      }
-    })
+  orchestraPanel = vscode.window.createWebviewPanel(
+    'orchestra.result',
+    '🎼 Orchestra Result',
+    vscode.ViewColumn.Two,
+    { enableScripts: true }
   );
 
-  console.log('MiMo by Xiaomi extension activated');
+  orchestraPanel.webview.html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: -apple-system, sans-serif; padding: 20px; background: #1e1e1e; color: #d4d4d4; }
+        h1 { color: #4fc1ff; }
+        .stats { display: flex; gap: 20px; margin: 20px 0; }
+        .stat { background: #252526; padding: 15px; border-radius: 8px; min-width: 120px; }
+        .stat-label { color: #858585; font-size: 12px; }
+        .stat-value { font-size: 24px; font-weight: bold; color: #4fc1ff; }
+        .subtask { background: #252526; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 3px solid #4fc1ff; }
+        .success { border-left-color: #4ec9b0; }
+        .error { border-left-color: #f48771; }
+        pre { background: #1e1e1e; padding: 15px; border-radius: 4px; overflow-x: auto; }
+        code { font-family: 'Courier New', monospace; }
+      </style>
+    </head>
+    <body>
+      <h1>🎼 Orchestra Execution Result</h1>
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-label">Cost</div>
+          <div class="stat-value">$${result.totalCost.toFixed(2)}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Tokens</div>
+          <div class="stat-value">${result.totalTokens.toLocaleString()}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Duration</div>
+          <div class="stat-value">${(result.totalDuration / 1000).toFixed(1)}s</div>
+        </div>
+      </div>
+      <h2>Subtasks</h2>
+      ${result.results.map((r: any) => `
+        <div class="subtask ${r.success ? 'success' : 'error'}">
+          <strong>${r.subtaskId}</strong> — ${r.success ? '✅ Success' : '❌ Failed'}
+          <br><small>Agent: ${result.plan.subtasks.find((s: any) => s.id === r.subtaskId)?.agent || 'unknown'}</small>
+          <br><small>Tokens: ${r.tokensUsed.toLocaleString()} | Cost: $${r.cost.toFixed(4)} | Time: ${(r.duration / 1000).toFixed(1)}s</small>
+          <pre><code>${escapeHtml(r.output.substring(0, 500))}${r.output.length > 500 ? '...' : ''}</code></pre>
+        </div>
+      `).join('')}
+      <h2>Final Output</h2>
+      <pre><code>${escapeHtml(result.finalOutput)}</code></pre>
+    </body>
+    </html>
+  `;
+
+  orchestraPanel.onDidDispose(() => {
+    orchestraPanel = undefined;
+  });
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 async function insertCodeToEditor(code: string) {
