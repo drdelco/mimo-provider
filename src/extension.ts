@@ -364,20 +364,45 @@ function showOrchestraResult(result: any) {
           <div class="stat-value">${(result.totalDuration / 1000).toFixed(1)}s</div>
         </div>
       </div>
-      <h2>Subtasks (${result.results.length} agents executed)</h2>
-      ${result.results.map((r: any) => `
-        <div class="subtask ${r.success ? 'success' : 'error'}">
-          <strong>${r.agentId}</strong> — ${r.success ? '✅ Success' : '❌ Failed'} · ${r.iterations} iterations
-          <br><small>Subtask: ${r.subtaskId} | Role: ${r.role}</small>
-          <br><small>Tools: ${r.toolsUsed.length > 0 ? r.toolsUsed.join(', ') : 'none'}</small>
-          <br><small>Files read: ${r.filesRead.join(', ') || 'none'} | Modified: ${r.filesModified.join(', ') || 'none'}</small>
-          <br><small>Tokens: ${r.tokensUsed.toLocaleString()} | Cost: $${r.cost.toFixed(4)} | Time: ${(r.duration / 1000).toFixed(1)}s</small>
-          <pre><code>${escapeHtml(r.output.substring(0, 500))}${r.output.length > 500 ? '...' : ''}</code></pre>
+      <h2>Work Orders (${result.workOrders.length} agents executed)</h2>
+      ${result.workOrders.map((w: any) => `
+        <div class="subtask ${w.status === 'done' ? 'success' : 'error'}">
+          <strong>${w.id}: ${w.title}</strong> — ${w.status.toUpperCase()}
+          <br><small>Agent: <code>${w.assignedTo || 'unassigned'}</code> · Role: ${w.role} · Iterations: ${w.result?.iterations ?? 0}</small>
+          <br><small>Files modified: ${w.result?.filesModified.join(', ') || 'none'}</small>
+          <br><small>Tools: ${w.result?.toolsUsed.join(', ') || 'none'}</small>
+          <br><small>Tokens: ${(w.result?.tokensUsed ?? 0).toLocaleString()} · Cost: $${(w.result?.cost ?? 0).toFixed(4)} · Time: ${((w.result?.duration ?? 0) / 1000).toFixed(1)}s</small>
+          <details><summary>Acceptance criteria (${w.acceptanceCriteria.length})</summary><ul>${w.acceptanceCriteria.map((c: string) => `<li>${escapeHtml(c)}</li>`).join('')}</ul></details>
+          <pre><code>${escapeHtml((w.result?.finalText ?? '').substring(0, 600))}${(w.result?.finalText ?? '').length > 600 ? '...' : ''}</code></pre>
         </div>
       `).join('')}
-      <h2>Pool usage (peak concurrency)</h2>
+      ${result.securityReview ? `
+        <h2>Security Review (${result.securityReview.agentId})</h2>
+        <div class="subtask ${result.securityReview.approved ? 'success' : 'error'}">
+          <strong>${result.securityReview.approved ? '✅ APPROVED' : '⚠️ ISSUES FOUND'}</strong>
+          <p>${escapeHtml(result.securityReview.summary)}</p>
+          ${result.securityReview.issues.length > 0 ? `
+            <h4>${result.securityReview.issues.length} issue(s)</h4>
+            <ul>${result.securityReview.issues.map((i: any) => `
+              <li><strong>[${i.severity}]</strong> ${escapeHtml(i.category)} — ${escapeHtml(i.description)}<br>
+              <small>${i.fileRef ? escapeHtml(i.fileRef) : 'no file'} → ${escapeHtml(i.recommendation)}</small></li>
+            `).join('')}</ul>
+          ` : ''}
+        </div>
+      ` : ''}
+      <h2>Inter-agent communication (${result.mailboxStats.totalSent} messages)</h2>
+      <p>Conversations: ${result.mailboxStats.conversations} · Delivered: ${result.mailboxStats.totalDelivered}</p>
+      ${result.conversationLog.length > 0 ? `
+        <details><summary>Full conversation log</summary>
+        ${result.conversationLog.map((m: any) => `
+          <div class="subtask"><strong>[${m.type}] ${m.from} → ${m.to}</strong><br>
+          <small>${m.subject}</small><br>
+          <pre><code>${escapeHtml(m.body.substring(0, 400))}</code></pre></div>
+        `).join('')}</details>
+      ` : ''}
+      <h2>Pool usage</h2>
       <pre><code>${escapeHtml(JSON.stringify(result.poolUsage, null, 2))}</code></pre>
-      <h2>Final Output</h2>
+      <h2>Final Report</h2>
       <pre><code>${escapeHtml(result.finalOutput)}</code></pre>
     </body>
     </html>

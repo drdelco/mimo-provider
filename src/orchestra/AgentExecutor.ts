@@ -12,6 +12,13 @@
 
 import { AICodingProvider, ChatMessage, ChatChunk, ToolCall } from '../providers/BaseProvider';
 import { TOOLS, executeTool } from '../tools';
+import {
+  ORCHESTRA_TOOLS,
+  OrchestraToolContext,
+  setOrchestraContext,
+  isOrchestraTool,
+  executeOrchestraTool
+} from './OrchestraTools';
 
 export interface AgentExecutionOptions {
   provider: AICodingProvider;
@@ -20,6 +27,8 @@ export interface AgentExecutionOptions {
   userTask: string;
   maxIterations?: number;
   onProgress?: (event: AgentEvent) => void;
+  /** Orchestra context — if provided, ask_agent / notify / broadcast / check_inbox become available */
+  orchestraContext?: OrchestraToolContext;
 }
 
 export type AgentEvent =
@@ -69,11 +78,12 @@ export class AgentExecutor {
         let turnContent = '';
         const turnToolCalls = new Map<number, ToolCall>();
 
+        const availableTools = opts.orchestraContext ? [...TOOLS, ...ORCHESTRA_TOOLS] : TOOLS;
         const stream = opts.provider.chat({
           model: opts.modelId,
           messages,
           stream: true,
-          tools: TOOLS,
+          tools: availableTools,
           maxTokens: 8192
         });
 
@@ -145,7 +155,16 @@ export class AgentExecutor {
 
           let result = '';
           try {
-            result = await executeTool(tc);
+            if (isOrchestraTool(tc.function.name)) {
+              setOrchestraContext(opts.orchestraContext);
+              try {
+                result = await executeOrchestraTool(tc);
+              } finally {
+                setOrchestraContext(undefined);
+              }
+            } else {
+              result = await executeTool(tc);
+            }
           } catch (err: any) {
             result = `Tool error: ${err.message}`;
           }
