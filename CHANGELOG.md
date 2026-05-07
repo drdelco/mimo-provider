@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.4 (2026-05-07)
+
+### Live visibility + multi-architect fallback
+
+1. **OrchestraLivePanel** (editor tab) opens automatically as soon as `Orchestra: Execute Complex Task` runs. The user no longer has to hunt for the sidebar — a prominent column-2 panel appears immediately, streams every event live (agent cards, tool calls, messages, security review, errors), and shows the final report inline at the bottom. The sidebar view stays in sync.
+
+2. **Architect chain reordered**: Claude → Kimi → MiMo → DeepSeek → MiniMax. MiniMax was producing unparseable JSON (and hallucinating tool-call XML inside the architect's plan), which was forcing the system to fall back to a single-WO. MiniMax is now last in the chain.
+
+3. **Multi-architect plan retry**: when the first architect produces unparseable JSON or only 1 WO for a non-trivial task, the system now:
+   - Retries the same architect with stronger instructions
+   - If still bad, tries the **next architect in the chain**
+   - If ALL architects fail, falls back to a **keyword-based heuristic decomposition** (Android → 6 WOs by layer; webapp → 5 WOs; API → 5 WOs; generic → 3 WOs). Better than a single monolithic WO.
+
+4. **"View detailed report" is now a button** on the success notification, not auto-opened. Reduces tab clutter and respects users who already see everything in the live panel.
+
 ## 1.2.3 (2026-05-07)
 
 ### Fixes from second Orchestra run

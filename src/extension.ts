@@ -19,7 +19,7 @@ import { MiMoChatViewProvider } from './webview';
 import { initOAuth, loginWithOAuth, logoutOAuth, getOAuthStatus } from './oauth';
 import { CodingDirector, OrchestrationResult } from './orchestra/Director';
 import { AgentPool, DEFAULT_LIMITS } from './orchestra/AgentPool';
-import { OrchestraViewProvider } from './orchestra/OrchestraView';
+import { OrchestraViewProvider, OrchestraLivePanel } from './orchestra/OrchestraView';
 
 const panels = new Map<number, { panel: vscode.WebviewPanel; provider: MiMoChatViewProvider }>();
 let orchestraResultPanel: vscode.WebviewPanel | undefined;
@@ -257,10 +257,15 @@ export function activate(context: vscode.ExtensionContext) {
       const pool = new AgentPool(poolLimits);
       const director = new CodingDirector(sandboxRoot, budget, pool, { autoFallback, skipSecurityReview });
 
-      // Stream live events to the sidebar view
+      // Open a prominent live panel as an editor tab so the user immediately
+      // sees activity. Sidebar view also stays in sync.
+      const livePanel = new OrchestraLivePanel(context.extensionUri);
       orchestraView.reveal();
       orchestraView.reset();
-      director.setEventListener((e) => orchestraView.postEvent(e));
+      director.setEventListener((e) => {
+        orchestraView.postEvent(e);
+        livePanel.postEvent(e);
+      });
 
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -269,16 +274,21 @@ export function activate(context: vscode.ExtensionContext) {
       }, async (progress) => {
         try {
           const result = await director.execute(request, progress);
+          // Push final to BOTH surfaces — the live panel adds the report at
+          // the bottom of the same view the user has been watching
           orchestraView.postFinal(result);
-          showOrchestraResultPanel(result);
+          livePanel.postFinal(result);
 
           const securityStatus = result.securityReview
             ? (result.securityReview.approved ? 'security ✅' : `security ⚠️ ${result.securityReview.issues.length} issues`)
             : 'security skipped';
-          vscode.window.showInformationMessage(
+          const action = await vscode.window.showInformationMessage(
             `Orchestra: $${result.totalCost.toFixed(4)} · ${(result.totalDuration / 1000).toFixed(1)}s · ${securityStatus}`,
-            'View Details'
+            'View detailed report'
           );
+          if (action === 'View detailed report') {
+            showOrchestraResultPanel(result);
+          }
         } catch (error: any) {
           vscode.window.showErrorMessage(`Orchestra failed: ${error.message}`);
         }

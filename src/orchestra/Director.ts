@@ -134,11 +134,14 @@ export type DirectorEvent =
   | { type: 'wo-fallback'; workOrderId: string; failedProvider: string; nextProvider: string; reason: string };
 
 export class TaskRouter {
+  // Provider order per role — first available wins.
+  // Architect needs reliable structured-JSON output, which is why minimax goes last
+  // (it has been observed hallucinating XML tool calls in plan output).
   private agentRoles: Map<AgentRole, string[]> = new Map([
-    ['architect', ['kimi', 'claude', 'minimax', 'mimo']],
+    ['architect', ['claude', 'kimi', 'mimo', 'deepseek', 'minimax']],
     ['coder',     ['mimo', 'minimax', 'deepseek', 'kimi']],
-    ['reviewer',  ['claude', 'kimi', 'minimax', 'mimo']],
-    ['security',  ['claude', 'kimi', 'minimax', 'mimo']],
+    ['reviewer',  ['claude', 'kimi', 'mimo', 'minimax']],
+    ['security',  ['claude', 'kimi', 'mimo', 'minimax']],
     ['optimizer', ['deepseek', 'mimo', 'minimax', 'kimi']],
     ['debugger',  ['mimo', 'claude', 'deepseek', 'minimax']],
     ['tester',    ['mimo', 'minimax', 'deepseek', 'kimi']]
@@ -343,10 +346,6 @@ export class CodingDirector {
   }
 
   private async createWorkOrders(request: string, available: AICodingProvider[]): Promise<WorkOrder[]> {
-    const architect = this.router.selectProvider('architect', available);
-    if (!architect) throw new Error('No architect provider available');
-    this.architectProvider = architect.name;
-
     // Heuristic: a request is "non-trivial" if it has multiple sentences, mentions
     // multiple components, or is over a threshold length. Used to decide whether
     // to retry when the architect produces only 1 WorkOrder.
@@ -357,28 +356,80 @@ export class CodingDirector {
       return wordCount > 15 || sentenceCount > 1 || hasMultipleConjunctions;
     };
 
-    // Try once, then retry with a stronger prompt if architect underdelivered
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const wos = await this.requestPlanFromArchitect(architect, request, attempt);
-      if (wos.length === 0) continue; // empty plan → retry
-      if (wos.length === 1 && isNonTrivial(request) && attempt === 0) {
-        // First attempt produced 1 WO for what looks like a multi-component task — retry harder
-        this.planRetried = true;
-        continue;
+    // Try the WHOLE architect chain. For each architect, try once normally; if the
+    // result is 1 WO for a non-trivial task, retry with stronger instructions.
+    // If still bad, fall through to the next architect in the chain.
+    const architectChain = this.router.selectProviderChain('architect', available);
+    if (architectChain.length === 0) throw new Error('No architect provider available');
+
+    for (const architect of architectChain) {
+      this.architectProvider = architect.name;
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const wos = await this.requestPlanFromArchitect(architect, request, attempt);
+        if (wos.length === 0) continue; // unparseable — retry
+        if (wos.length === 1 && isNonTrivial(request) && attempt === 0) {
+          this.planRetried = true;
+          continue; // single WO for multi-component task → retry harder
+        }
+        return wos; // accepted
       }
-      return wos;
+      // This architect couldn't produce a usable plan — try the next one in the chain
     }
 
-    // Final fallback: single coder WO
-    return [buildWorkOrder({
-      id: 'WO-001',
-      title: request.substring(0, 60),
-      description: request,
-      role: 'coder',
-      dependsOn: [],
-      deliverables: ['Working implementation of the requested change'],
-      acceptanceCriteria: ['Code compiles', 'No errors when run']
-    }, 0)];
+    // Last-resort: heuristic decomposition based on keywords in the request.
+    // Better than a single monolithic WO when no architect could plan.
+    return this.heuristicDecomposition(request);
+  }
+
+  /**
+   * Keyword-based fallback when every architect failed.
+   * Splits the request into 3-6 generic Work Orders covering common project layers.
+   */
+  private heuristicDecomposition(request: string): WorkOrder[] {
+    const lower = request.toLowerCase();
+    const wos: any[] = [];
+
+    // Detect project type to pick decomposition pattern
+    const isAndroid = /\b(android|apk|kotlin|java|gradle)\b/.test(lower);
+    const isWebApp = /\b(react|vue|angular|next\.?js|svelte|web\s?app)\b/.test(lower);
+    const isApi = /\b(api|rest|graphql|backend|express|fastapi|django|flask)\b/.test(lower);
+
+    if (isAndroid) {
+      wos.push(
+        { id: 'WO-001', title: 'Project setup', role: 'coder', dependsOn: [], description: 'Set up Gradle project structure, manifest, and module config for: ' + request, deliverables: ['build.gradle', 'settings.gradle', 'AndroidManifest.xml'], acceptanceCriteria: ['Gradle build files are valid'] },
+        { id: 'WO-002', title: 'Data layer', role: 'coder', dependsOn: ['WO-001'], description: 'Implement Room database, entities, and DAOs', deliverables: ['Entity classes', 'DAO interfaces', 'Database singleton'], acceptanceCriteria: ['Database compiles without errors'] },
+        { id: 'WO-003', title: 'Network layer', role: 'coder', dependsOn: ['WO-001'], description: 'Implement Retrofit/OkHttp API client', deliverables: ['Retrofit service interface', 'API models', 'Repository'], acceptanceCriteria: ['Network calls compile'] },
+        { id: 'WO-004', title: 'UI activities', role: 'coder', dependsOn: ['WO-002', 'WO-003'], description: 'Build activities, layouts, and adapters', deliverables: ['MainActivity', 'XML layouts', 'RecyclerView adapters'], acceptanceCriteria: ['UI renders correctly'] },
+        { id: 'WO-005', title: 'Notifications/scheduler', role: 'coder', dependsOn: ['WO-002'], description: 'WorkManager or AlarmManager scheduling for background tasks', deliverables: ['Worker classes', 'NotificationManager wiring'], acceptanceCriteria: ['Schedules persist across reboot'] },
+        { id: 'WO-006', title: 'Resources', role: 'coder', dependsOn: ['WO-001'], description: 'Strings, themes, drawables, icons', deliverables: ['strings.xml', 'themes.xml', 'drawable resources'], acceptanceCriteria: ['No missing resource references'] }
+      );
+    } else if (isWebApp) {
+      wos.push(
+        { id: 'WO-001', title: 'Project scaffold', role: 'coder', dependsOn: [], description: 'Set up project, dependencies, build config: ' + request, deliverables: ['package.json', 'tsconfig.json', 'build config'], acceptanceCriteria: ['Project builds'] },
+        { id: 'WO-002', title: 'Components', role: 'coder', dependsOn: ['WO-001'], description: 'Build UI components', deliverables: ['Component files'], acceptanceCriteria: ['Components render'] },
+        { id: 'WO-003', title: 'State / data', role: 'coder', dependsOn: ['WO-001'], description: 'Data fetching, state management', deliverables: ['Hooks/stores', 'API client'], acceptanceCriteria: ['Data flows end-to-end'] },
+        { id: 'WO-004', title: 'Routing', role: 'coder', dependsOn: ['WO-002'], description: 'Page routes / navigation', deliverables: ['Router config', 'page components'], acceptanceCriteria: ['Routes navigable'] },
+        { id: 'WO-005', title: 'Styling', role: 'coder', dependsOn: ['WO-002'], description: 'CSS / theme system', deliverables: ['Style files'], acceptanceCriteria: ['Visual consistency'] }
+      );
+    } else if (isApi) {
+      wos.push(
+        { id: 'WO-001', title: 'Project setup', role: 'coder', dependsOn: [], description: 'Project scaffolding, dependencies, server entry: ' + request, deliverables: ['Server entry', 'package/requirements'], acceptanceCriteria: ['Server starts'] },
+        { id: 'WO-002', title: 'Routes', role: 'coder', dependsOn: ['WO-001'], description: 'HTTP route handlers', deliverables: ['Route files'], acceptanceCriteria: ['Routes respond'] },
+        { id: 'WO-003', title: 'Data models', role: 'coder', dependsOn: ['WO-001'], description: 'Schemas, validation, DB models', deliverables: ['Model files'], acceptanceCriteria: ['Models valid'] },
+        { id: 'WO-004', title: 'Auth', role: 'coder', dependsOn: ['WO-001'], description: 'Authentication middleware', deliverables: ['Auth middleware'], acceptanceCriteria: ['Protected routes work'] },
+        { id: 'WO-005', title: 'Tests', role: 'tester', dependsOn: ['WO-002', 'WO-003'], description: 'Integration tests', deliverables: ['Test files'], acceptanceCriteria: ['Tests pass'] }
+      );
+    } else {
+      // Generic split — at least force some parallelism
+      wos.push(
+        { id: 'WO-001', title: 'Setup and scaffolding', role: 'coder', dependsOn: [], description: 'Initial setup for: ' + request, deliverables: ['Project structure'], acceptanceCriteria: ['Project skeleton exists'] },
+        { id: 'WO-002', title: 'Core implementation', role: 'coder', dependsOn: ['WO-001'], description: 'Main feature: ' + request, deliverables: ['Working code'], acceptanceCriteria: ['Compiles and runs'] },
+        { id: 'WO-003', title: 'Tests', role: 'tester', dependsOn: ['WO-002'], description: 'Tests for the implementation', deliverables: ['Test files'], acceptanceCriteria: ['Tests pass'] }
+      );
+    }
+
+    return wos.map((raw, idx) => buildWorkOrder(raw, idx));
   }
 
   private async requestPlanFromArchitect(
