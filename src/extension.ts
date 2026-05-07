@@ -238,23 +238,15 @@ export function activate(context: vscode.ExtensionContext) {
       const autoFallback = orchestraConfig.get<boolean>('autoFallback') ?? true;
       const skipSecurityReview = orchestraConfig.get<boolean>('skipSecurityReview') ?? false;
 
-      // Pick a sandbox directory so agents do not pollute the active workspace.
-      // Default: <workspace>/.orchestra-runs/<timestamp-slug>/
-      // User can override via input box.
+      // Auto-create a unique sandbox directory under .orchestra-runs/.
+      // Agents write all files here so the user's main workspace stays clean.
+      // Path is a per-second timestamp + slug from the request — guaranteed unique
+      // and human-readable when listing past runs.
       const fs = require('fs') as typeof import('fs');
       const path = require('path') as typeof import('path');
       const ts = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
-      const slug = request.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 30);
-      const defaultSandbox = path.join(workspaceRoot, '.orchestra-runs', `${ts}-${slug}`);
-
-      const sandboxChoice = await vscode.window.showInputBox({
-        prompt: 'Where should the agents write their output? (Empty = default sandbox)',
-        value: defaultSandbox,
-        valueSelection: [0, defaultSandbox.length]
-      });
-      if (sandboxChoice === undefined) return; // user cancelled
-
-      const sandboxRoot = sandboxChoice.trim() || defaultSandbox;
+      const slug = request.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 40);
+      const sandboxRoot = path.join(workspaceRoot, '.orchestra-runs', `${ts}-${slug}`);
       try {
         fs.mkdirSync(sandboxRoot, { recursive: true });
       } catch (err: any) {
@@ -367,6 +359,7 @@ function renderResultHtml(result: OrchestrationResult): string {
 </style></head><body>
   <h1>🎼 MiMonster Orchestra Result</h1>
   <p><small>Sandbox: <code>${escape(result.sandboxRoot)}</code></small></p>
+  <p><small>Architect: <strong>${escape(result.architectProvider || '(unknown)')}</strong>${result.planRetried ? ' · plan retried after producing only 1 WO on first attempt' : ''}</small></p>
   <div class="stats">
     <div class="stat"><div class="stat-label">Cost</div><div class="stat-value">$${result.totalCost.toFixed(4)}</div></div>
     <div class="stat"><div class="stat-label">Tokens</div><div class="stat-value">${result.totalTokens.toLocaleString()}</div></div>

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.3 (2026-05-07)
+
+### Fixes from second Orchestra run
+
+1. **Sandbox UX confusion fixed**: removed the `Where should the agents write?` input box. The sandbox is now silently auto-created at `.orchestra-runs/<timestamp>-<slug>/`. (Users were pasting the task description into the sandbox prompt by mistake, which then became the sandbox path.)
+
+2. **Pseudo tool-call XML leaks**: the synthesize step was producing garbage like `<minimax:tool_call><invoke name="mimo-coder-001">...</invoke></minimax:tool_call>` — MiniMax was hallucinating tool calls (with agent IDs as tool names). The strip helper now removes all known tool-call XML dialects: `<minimax:tool_call>`, `<function_calls>`, `<function_calls>`, `<tool_call>`, `<invoke>`, `<parameter>`.
+
+3. **Architect plan retry**: if the architect produces only 1 Work Order for a non-trivial request (>15 words, multiple sentences, or multiple conjunctions), the plan is automatically rejected and re-prompted with explicit instructions to emit at least 4 parallel WorkOrders. Result panel shows `plan retried` when this happened.
+
+4. **Architect identity surfaced**: result panel now shows which provider played the architect role, so it's clear who's at the wheel.
+
 ## 1.2.2 (2026-05-07)
 
 ### Critical fixes (5 bugs from first real Orchestra run)

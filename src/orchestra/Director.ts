@@ -39,22 +39,47 @@ import {
 export type AgentRole = 'architect' | 'coder' | 'reviewer' | 'optimizer' | 'debugger' | 'tester' | 'security';
 
 /**
- * Strip <think>...</think> chain-of-thought blocks from reasoning model output.
+ * Strip leaked metadata tags from reasoning-model output.
  *
- * Models like MiMo, Kimi, and MiniMax emit their reasoning inside <think> tags.
- * If a closing </think> appears mid-JSON, naive parsers explode. We strip:
- *   - Properly closed <think>...</think> blocks
- *   - Unclosed <think>... that runs to end-of-text (truncated reasoning)
- *   - Stray closing </think> that follows leaked reasoning
+ * Reasoning models leak two kinds of garbage into their plain-text output:
+ *
+ * 1. Chain-of-thought blocks: <think>...</think>
+ *    MiMo, Kimi, MiniMax, DeepSeek-r1 all do this.
+ *
+ * 2. Hallucinated tool-call XML: <minimax:tool_call>, <invoke>, <function_calls>,
+ *    <function_calls>, <tool_call>. These appear when a model has been
+ *    trained to emit XML for tool calls and then outputs them as text in a
+ *    context where no tools are actually available (e.g. our synthesize step).
+ *
+ * Both kinds break JSON parsing and pollute final reports. We strip them with
+ * the same helper so every consumer of model output is protected.
  */
 export function stripThinkTags(text: string): string {
   if (!text) return text;
-  // Closed blocks
-  let result = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
-  // Unclosed opening (model started thinking but never closed)
+  let result = text;
+
+  // 1. Chain-of-thought blocks (paired)
+  result = result.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  // Unclosed opening — reasoning that ran to end-of-text
   result = result.replace(/<think>[\s\S]*$/i, '');
-  // Stray closing (reasoning leaked before the tag, then the tag appeared)
+  // Stray closing tag
   result = result.replace(/<\/think>/gi, '');
+
+  // 2. Hallucinated tool-call XML (paired) — covers all known model dialects
+  const toolCallTagPatterns = [
+    /<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/gi,
+    /<function_calls>[\s\S]*?<\/antml:function_calls>/gi,
+    /<function_calls>[\s\S]*?<\/function_calls>/gi,
+    /<tool_call>[\s\S]*?<\/tool_call>/gi,
+    /<tool_calls>[\s\S]*?<\/tool_calls>/gi,
+    /<invoke[^>]*>[\s\S]*?<\/invoke>/gi,
+    /<parameter[^>]*>[\s\S]*?<\/parameter>/gi,
+  ];
+  for (const rx of toolCallTagPatterns) result = result.replace(rx, '');
+
+  // Stray opening/closing tags that survived
+  result = result.replace(/<\/?(?:minimax:tool_call|antml:function_calls|function_calls|tool_call|tool_calls|invoke|parameter)[^>]*>/gi, '');
+
   return result.trim();
 }
 
@@ -71,6 +96,10 @@ export interface OrchestrationResult {
   conversationLog: AgentMessage[];
   memoryStats: ReturnType<VectorMemory['stats']>;
   sandboxRoot: string;
+  /** Which provider planned the work (architect role) */
+  architectProvider?: string;
+  /** Whether the architect plan had to be retried due to under-decomposition */
+  planRetried: boolean;
 }
 
 export interface SecurityReviewResult {
@@ -198,6 +227,8 @@ export class CodingDirector {
   private usedBudget = 0;
   private onEvent?: (e: DirectorEvent) => void;
   private skipSecurityReview: boolean;
+  private architectProvider?: string;
+  private planRetried: boolean = false;
 
   private autoFallback: boolean;
 
@@ -305,19 +336,59 @@ export class CodingDirector {
       mailboxStats: this.mailbox.stats(),
       conversationLog: this.mailbox.history(),
       memoryStats: this.vectorMemory.stats(),
-      sandboxRoot: this.sandboxRoot
+      sandboxRoot: this.sandboxRoot,
+      architectProvider: this.architectProvider,
+      planRetried: this.planRetried
     };
   }
 
   private async createWorkOrders(request: string, available: AICodingProvider[]): Promise<WorkOrder[]> {
     const architect = this.router.selectProvider('architect', available);
     if (!architect) throw new Error('No architect provider available');
+    this.architectProvider = architect.name;
 
+    // Heuristic: a request is "non-trivial" if it has multiple sentences, mentions
+    // multiple components, or is over a threshold length. Used to decide whether
+    // to retry when the architect produces only 1 WorkOrder.
+    const isNonTrivial = (req: string): boolean => {
+      const wordCount = req.trim().split(/\s+/).length;
+      const sentenceCount = (req.match(/[.!?]/g) ?? []).length;
+      const hasMultipleConjunctions = (req.toLowerCase().match(/\b(and|y|with|con|que|plus|también)\b/g) ?? []).length >= 2;
+      return wordCount > 15 || sentenceCount > 1 || hasMultipleConjunctions;
+    };
+
+    // Try once, then retry with a stronger prompt if architect underdelivered
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const wos = await this.requestPlanFromArchitect(architect, request, attempt);
+      if (wos.length === 0) continue; // empty plan → retry
+      if (wos.length === 1 && isNonTrivial(request) && attempt === 0) {
+        // First attempt produced 1 WO for what looks like a multi-component task — retry harder
+        this.planRetried = true;
+        continue;
+      }
+      return wos;
+    }
+
+    // Final fallback: single coder WO
+    return [buildWorkOrder({
+      id: 'WO-001',
+      title: request.substring(0, 60),
+      description: request,
+      role: 'coder',
+      dependsOn: [],
+      deliverables: ['Working implementation of the requested change'],
+      acceptanceCriteria: ['Code compiles', 'No errors when run']
+    }, 0)];
+  }
+
+  private async requestPlanFromArchitect(
+    architect: AICodingProvider,
+    request: string,
+    attempt: number
+  ): Promise<WorkOrder[]> {
     const context = this.memory.loadProjectContext();
-    const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: `You are a system architect. Break the user's request into Work Orders for parallel execution by specialist agents.
+
+    const baseSystem = `You are a system architect. Break the user's request into Work Orders for parallel execution by specialist agents.
 
 Each Work Order must include:
 - id: unique like "WO-001"
@@ -330,7 +401,7 @@ Each Work Order must include:
 - deliverables: concrete outputs (file paths, function names, behaviors)
 - acceptanceCriteria: explicit testable checks for "done"
 
-Guidelines (CRITICAL — read carefully):
+Guidelines (CRITICAL):
 - DECOMPOSE AGGRESSIVELY. The whole point of the orchestra is parallelism. A task that touches multiple layers (data, network, UI, services, build config) MUST be split into one WorkOrder per layer.
 - Target: at least 3-5 Work Orders for any non-trivial task. Up to 12 for large multi-component projects.
 - Use dependsOn: [] for tasks that can run in parallel — be generous with parallelism.
@@ -339,18 +410,20 @@ Guidelines (CRITICAL — read carefully):
 - Tiny one-line bug fixes are the only case for a single Work Order.
 - Acceptance criteria must be explicit and testable ("file X compiles", "function Y returns Z when called with W").
 - Deliverables must be concrete artifacts that exist after the WO is done.
-- A reviewer WorkOrder can run in parallel with coders if it reviews their output (use dependsOn for the reviewed WO ids).
 
 Respond ONLY with valid JSON, no markdown fences:
 {
   "workOrders": [ ... ],
   "requirements": ["constraint1", ...]
-}`
-      },
-      {
-        role: 'user',
-        content: `Project context:\n${context}\n\nRequest: ${request}`
-      }
+}`;
+
+    const retryAddendum = attempt > 0
+      ? `\n\nIMPORTANT: Your previous plan had only 1 Work Order, which is REJECTED for this request. The user's request mentions multiple distinct components (data, network, UI, scheduling, etc.). You MUST emit AT LEAST 4 Work Orders, each focused on a different file or component. Tasks that touch independent files (different modules, different layers) should have dependsOn: [] so they run in parallel.`
+      : '';
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: baseSystem + retryAddendum },
+      { role: 'user', content: `Project context:\n${context}\n\nRequest: ${request}` }
     ];
 
     let response = '';
@@ -361,11 +434,8 @@ Respond ONLY with valid JSON, no markdown fences:
     }
 
     try {
-      // Strip <think> reasoning blocks BEFORE parsing — reasoning models leak them
       const stripped = stripThinkTags(response);
-      // Then strip markdown fences and try to find the JSON object
       const cleaned = stripped.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/, '').trim();
-      // Find the JSON object even if there's prose around it
       const firstBrace = cleaned.indexOf('{');
       const lastBrace = cleaned.lastIndexOf('}');
       const jsonStr = firstBrace >= 0 && lastBrace > firstBrace
@@ -375,16 +445,7 @@ Respond ONLY with valid JSON, no markdown fences:
       const list = (parsed.workOrders ?? parsed.subtasks ?? []) as any[];
       return list.map((raw, idx) => buildWorkOrder(raw, idx));
     } catch {
-      // Fallback: single coder WO
-      return [buildWorkOrder({
-        id: 'WO-001',
-        title: request.substring(0, 60),
-        description: request,
-        role: 'coder',
-        dependsOn: [],
-        deliverables: ['Working implementation of the requested change'],
-        acceptanceCriteria: ['Code compiles', 'No errors when run']
-      }, 0)];
+      return [];
     }
   }
 
