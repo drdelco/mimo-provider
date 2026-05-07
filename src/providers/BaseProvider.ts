@@ -54,6 +54,8 @@ export interface ToolDefinition {
 
 export interface ToolCall {
   id: string;
+  /** Always 'function' — DeepSeek requires this field, others are tolerant. */
+  type?: 'function';
   /** Streaming index — present on streamed deltas so we can group fragments of the same call */
   index?: number;
   function: {

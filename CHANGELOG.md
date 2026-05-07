@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.5 (2026-05-07)
+
+### DeepSeek unbreaking + live activity visibility
+
+1. **DeepSeek now works**: tool_calls in assistant messages were missing the OpenAI-spec `type: "function"` field. Other providers tolerated its absence; DeepSeek strictly required it and rejected every multi-turn conversation with `400: missing field "type"`. Added explicitly. DeepSeek can now actually run as a coder.
+
+2. **Per-agent activity line**: each agent card now shows the current activity (latest tool call, iteration number, completion status) inline at all times — no need to expand the card. Examples: `→ read_file path/to/file`, `← list_files done`, `thinking (iter 12)...`, `✓ done in 45.2s`.
+
+3. **Pending Work Order cards**: WOs blocked by dependencies now show as faded `(queued)` cards with `waiting for WO-001, WO-002` instead of being invisible. Resolves the "3 minutes of silence with only 1 agent" experience — the user can see all queued WOs from the start.
+
 ## 1.2.4 (2026-05-07)
 
 ### Live visibility + multi-architect fallback

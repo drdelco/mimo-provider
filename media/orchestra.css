@@ -90,6 +90,18 @@ body {
 .agent.done      { border-left-color: var(--vscode-charts-green); }
 .agent.failed    { border-left-color: var(--vscode-charts-red); }
 .agent.security  { border-left-color: var(--vscode-charts-orange); }
+.agent.pending   { border-left-color: var(--vscode-descriptionForeground); opacity: 0.6; }
+
+.agent-activity {
+  margin-top: 4px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pending-waiting { font-style: italic; }
 
 .agent-head {
   display: flex;

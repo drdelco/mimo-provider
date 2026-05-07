@@ -90,6 +90,10 @@
   function ensureAgent(agentId, workOrderId, role, title) {
     if (agents.has(agentId)) return agents.get(agentId);
 
+    // Replace any pending placeholder for this WO with the real agent card
+    var pendingPlaceholder = document.getElementById('pending-' + workOrderId);
+    if (pendingPlaceholder) pendingPlaceholder.remove();
+
     const data = { workOrderId, role, title, status: 'thinking', events: [], iters: 0, startedAt: Date.now() };
     agents.set(agentId, data);
     statAgents.textContent = String(agents.size);
@@ -103,6 +107,10 @@
     head.addEventListener('click', () => card.classList.toggle('expanded'));
     card.appendChild(head);
 
+    // Activity line — shows latest tool call / event without expanding the card
+    var activity = el('div', { cls: 'agent-activity', id: 'activity-' + agentId, text: 'starting...' });
+    card.appendChild(activity);
+
     const body = el('div', { cls: 'agent-body' });
     body.appendChild(el('div', { cls: 'agent-events', id: 'events-' + agentId }));
     body.appendChild(el('div', { cls: 'agent-output', id: 'output-' + agentId, text: '(no output yet)' }));
@@ -111,6 +119,30 @@
     main.appendChild(card);
     main.scrollTop = main.scrollHeight;
     return data;
+  }
+
+  function setAgentActivity(agentId, text) {
+    var el = document.getElementById('activity-' + agentId);
+    if (el) el.textContent = text;
+  }
+
+  function ensurePendingCard(workOrderId, title, role, waitingFor) {
+    var existing = document.getElementById('pending-' + workOrderId);
+    if (existing) {
+      var w = existing.querySelector('.pending-waiting');
+      if (w) w.textContent = 'waiting for ' + (waitingFor.length ? waitingFor.join(', ') : 'no deps');
+      return existing;
+    }
+    var card = el('div', { cls: 'agent pending', id: 'pending-' + workOrderId });
+    var head = el('div', { cls: 'agent-head' });
+    head.appendChild(el('span', { cls: 'agent-id', text: '(queued)' }));
+    head.appendChild(el('span', { cls: 'agent-status', text: role }));
+    head.appendChild(el('span', { cls: 'agent-title', text: workOrderId + ': ' + title }));
+    card.appendChild(head);
+    card.appendChild(el('div', { cls: 'agent-activity pending-waiting', text: 'waiting for ' + (waitingFor.length ? waitingFor.join(', ') : 'no deps') }));
+    main.appendChild(card);
+    main.scrollTop = main.scrollHeight;
+    return card;
   }
 
   function setAgentStatus(agentId, status) {
@@ -209,9 +241,14 @@
         addPhase('Phase 2 — Executing ' + msg.workOrderCount + ' work orders');
         break;
 
+      case 'wo-pending':
+        ensurePendingCard(msg.workOrderId, msg.title, msg.role, msg.waitingFor || []);
+        break;
+
       case 'wo-start':
         ensureAgent(msg.agentId, msg.workOrderId, msg.role, msg.title);
         setAgentStatus(msg.agentId, 'running');
+        setAgentActivity(msg.agentId, 'starting...');
         if (msg.role === 'security') setAgentStatus(msg.agentId, 'security');
         break;
 
@@ -220,21 +257,27 @@
         if (ev.type === 'thinking') {
           setAgentIter(msg.agentId, ev.iteration);
           setAgentStatus(msg.agentId, 'thinking');
+          setAgentActivity(msg.agentId, 'thinking (iter ' + ev.iteration + ')...');
           pushAgentEvent(msg.agentId, 'thinking', '· thinking (iter ' + ev.iteration + ')');
         } else if (ev.type === 'text') {
           setAgentStatus(msg.agentId, 'thinking');
           appendOutput(msg.agentId, ev.content);
         } else if (ev.type === 'tool-call') {
           setAgentStatus(msg.agentId, 'tool');
+          var argsPreview = JSON.stringify(ev.args).substring(0, 60);
+          setAgentActivity(msg.agentId, '→ ' + ev.name + ' ' + argsPreview);
           pushAgentEvent(msg.agentId, 'tool-call', '→ ' + ev.name + '(' + JSON.stringify(ev.args).substring(0, 80) + ')');
         } else if (ev.type === 'tool-result') {
-          pushAgentEvent(msg.agentId, 'tool-result', '← ' + ev.name + ': ' + ev.result.substring(0, 80) + (ev.truncated ? '…' : ''));
+          var resultPreview = ev.result.substring(0, 60).replace(/\n/g, ' ');
+          setAgentActivity(msg.agentId, '← ' + ev.name + ' done');
+          pushAgentEvent(msg.agentId, 'tool-result', '← ' + ev.name + ': ' + resultPreview + (ev.truncated ? '…' : ''));
         }
         break;
       }
 
       case 'wo-done':
         setAgentStatus(msg.agentId, msg.success ? 'done' : 'failed');
+        setAgentActivity(msg.agentId, (msg.success ? '✓ done in ' : '✗ failed after ') + formatMs(msg.duration));
         totalCost += msg.cost || 0;
         statCost.textContent = '$' + totalCost.toFixed(4);
         const data = agents.get(msg.agentId);

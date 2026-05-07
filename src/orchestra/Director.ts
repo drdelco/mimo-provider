@@ -131,7 +131,8 @@ export type DirectorEvent =
   | { type: 'synthesize-start' }
   | { type: 'synthesize-done' }
   | { type: 'budget-warning'; used: number; limit: number }
-  | { type: 'wo-fallback'; workOrderId: string; failedProvider: string; nextProvider: string; reason: string };
+  | { type: 'wo-fallback'; workOrderId: string; failedProvider: string; nextProvider: string; reason: string }
+  | { type: 'wo-pending'; workOrderId: string; title: string; role: AgentRole; waitingFor: string[] };
 
 export class TaskRouter {
   // Provider order per role — first available wins.
@@ -532,6 +533,21 @@ Respond ONLY with valid JSON, no markdown fences:
 
       // Snapshot peers BEFORE the parallel batch (so peers list is stable per batch)
       const peerIds = [...workOrders.map(w => w.assignedTo).filter(Boolean) as string[]];
+
+      // Emit wo-pending for everything that's queued but not ready, so the UI
+      // can show "waiting for X" cards instead of going silent.
+      for (const w of remaining.values()) {
+        if (!ready.includes(w)) {
+          const waitingFor = (w.dependsOn ?? []).filter(d => !completed.has(d));
+          this.emit({
+            type: 'wo-pending',
+            workOrderId: w.id,
+            title: w.title,
+            role: w.role,
+            waitingFor
+          });
+        }
+      }
 
       progress?.report({
         message: `Running ${ready.length} WO(s) in parallel`,

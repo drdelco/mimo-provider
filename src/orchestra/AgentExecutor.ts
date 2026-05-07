@@ -142,10 +142,17 @@ export class AgentExecutor {
 
         // Add assistant message with tool_calls to history
         const callsArray = [...turnToolCalls.values()];
+        // DeepSeek strictly requires `type: "function"` on each tool_call.
+        // Other providers tolerate its absence, but adding it is OpenAI-spec-correct.
+        const callsForApi = callsArray.map(tc => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: tc.function
+        }));
         messages.push({
           role: 'assistant',
           content: turnContent,
-          tool_calls: callsArray
+          tool_calls: callsForApi
         });
 
         // Execute each tool call and feed result back
